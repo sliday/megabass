@@ -1,6 +1,7 @@
 #!/bin/sh
 # Packs a 1024x1024 transparent PNG into Resources/AppIcon.icns (all macOS sizes).
-# The PNG came from: REPLICATE_API_TOKEN=... uv run tools/replicate_icon.py openai/gpt-image-1.5 3 out/ < tools/icon_prompt.txt
+# The PNG came from: REPLICATE_API_TOKEN=... uv run tools/replicate_icon.py openai/gpt-image-2.6-sunburst 3 out/ < tools/icon_prompt.txt
+# (newest OpenAI image model on Replicate, Nov 2026; check /v1/collections/text-to-image for newer)
 # then trimmed to the body and scaled onto Apple's 824/1024 grid.
 set -e
 cd "$(dirname "$0")/.."

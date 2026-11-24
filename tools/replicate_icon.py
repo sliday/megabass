@@ -5,6 +5,8 @@ tok = os.environ["REPLICATE_API_TOKEN"]
 H = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "User-Agent": "megabass-icon/1.0"}
 body = {"input": {"prompt": sys.stdin.read().strip(), "background": "transparent", "output_format": "png",
                   "quality": "high", "number_of_images": n, "aspect_ratio": "1:1", "moderation": "low"}}
+if "2.6" in model:
+    body["input"]["complexity"] = os.environ.get("COMPLEXITY", "medium")   # 2.6 only: planning depth
 req = urllib.request.Request(f"https://api.replicate.com/v1/models/{model}/predictions", json.dumps(body).encode(), H)
 try:
     p = json.load(urllib.request.urlopen(req, timeout=60))
