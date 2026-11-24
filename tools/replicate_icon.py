@@ -3,7 +3,7 @@ import json, os, sys, time, urllib.error, urllib.request
 model, n, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 tok = os.environ["REPLICATE_API_TOKEN"]
 H = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json", "User-Agent": "megabass-icon/1.0"}
-body = {"input": {"prompt": sys.stdin.read().strip(), "background": "transparent", "output_format": "png",
+body = {"input": {"prompt": sys.stdin.read().strip(), "background": os.environ.get("BACKGROUND", "transparent"), "output_format": "png",
                   "quality": "high", "number_of_images": n, "aspect_ratio": "1:1", "moderation": "low"}}
 if "2.6" in model:
     body["input"]["complexity"] = os.environ.get("COMPLEXITY", "medium")   # 2.6 only: planning depth

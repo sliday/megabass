@@ -61,7 +61,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             preview = w
+        } else if !args.contains("--no-panel") {
+            // Launched by hand (Spotlight, Alfred, Finder): show the panel. A menu-bar manager such as
+            // Bartender, or the notch, can hide the menu-bar icon; the app must still be reachable.
+            showPanel()
         }
+    }
+
+    /// Opening megabass again while it runs shows the panel.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        showPanel()
+        return true
+    }
+
+    private var panel: NSPanel?
+
+    /// The popover as a floating panel under the right end of the menu bar.
+    func showPanel() {
+        if panel == nil {
+            let p = NSPanel(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView, .utilityWindow], backing: .buffered, defer: false)
+            p.titleVisibility = .hidden
+            p.titlebarAppearsTransparent = true
+            p.isMovableByWindowBackground = false   // drags belong to the sliders; move by the top strip
+            p.level = .floating
+            p.hidesOnDeactivate = false
+            p.isReleasedWhenClosed = false
+            p.contentView = NSHostingView(rootView: PopoverView(engine: engine, player: player))
+            p.setContentSize(p.contentView!.fittingSize)
+            if let screen = NSScreen.main {
+                let v = screen.visibleFrame
+                p.setFrameTopLeftPoint(NSPoint(x: v.maxX - p.frame.width - 12, y: v.maxY - 8))
+            }
+            panel = p
+        }
+        panel?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationWillTerminate(_ note: Notification) { engine.shutdown() }

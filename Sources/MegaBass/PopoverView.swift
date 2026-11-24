@@ -65,7 +65,7 @@ struct PopoverView: View {
         if !engine.enabled { return "OFF" }
         switch engine.source {
         case .demo: return "DEMO"
-        case .system: return engine.bassLevel > 0.03 ? "LISTENING" : "NO BASS"
+        case .system: return (engine.spectrum.max() ?? 0) > 0.05 ? "LISTENING" : "SILENT"
         case .none: return engine.needsPermission ? "NEEDS ACCESS" : "IDLE"
         }
     }
