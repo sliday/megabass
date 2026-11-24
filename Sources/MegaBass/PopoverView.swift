@@ -21,13 +21,12 @@ struct PopoverView: View {
             header
             PowerRing(engine: engine)
                 .padding(.top, 4)
-            SpectrumStrip(engine: engine)
             if player.installed { NowPlaying(player: player) }
             if engine.needsPermission { permissionRow }
             Group {
                 ModePicker(mode: $engine.mode, enabled: engine.enabled)
                 VStack(spacing: 14) {
-                    LowBandControl(low: $engine.rumbleHz, high: $engine.crossover)
+                    LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
                     ValueSlider(label: "Intensity", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
                 }
                 .padding(12)
@@ -174,11 +173,12 @@ struct ModePicker: View {
                         Text(m.title).font(.system(size: 11, weight: .medium))
                     }
                     .frame(maxWidth: .infinity, minHeight: 44)
-                    .foregroundStyle(mode == m ? .white : Theme.secondary)
+                    .foregroundStyle(mode == m ? (enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white)) : AnyShapeStyle(Theme.secondary))
                     .background {
                         if mode == m {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.14)))
+                                .fill(Color.white.opacity(0.1))
+                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                                 .matchedGeometryEffect(id: "thumb", in: thumb)
                         }
                     }
@@ -209,7 +209,9 @@ struct ModePicker: View {
 struct LowBandControl: View {
     @Binding var low: Double
     @Binding var high: Double
-    static let range = 20.0...4000.0
+    var spectrum: [Double] = []
+    var live = false
+    static let range = SpectrumAnalyzer.range
     /// Plain-language zones on the strip.
     static let zones: [(name: String, from: Double, to: Double)] = [("Bass", 20, 160), ("Voices", 160, 1000), ("Melody", 1000, 4000)]
 
@@ -233,7 +235,7 @@ struct LowBandControl: View {
                 Spacer()
                 Text(summary).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
             }
-            BandStrip(low: $low, high: $high)
+            BandStrip(low: $low, high: $high, spectrum: spectrum, live: live)
         }
         .help("The trackpad plays \(hzText). Left handle: how deep. Right handle: how much of the song. Above the bass it only plays notes that stand out and last.")
     }
@@ -243,6 +245,8 @@ struct LowBandControl: View {
 struct BandStrip: View {
     @Binding var low: Double
     @Binding var high: Double
+    var spectrum: [Double] = []
+    var live = false
     private let r = LowBandControl.range
 
     private func x(_ hz: Double, _ w: CGFloat) -> CGFloat { CGFloat(log(hz / r.lowerBound) / log(r.upperBound / r.lowerBound)) * w }
@@ -253,34 +257,45 @@ struct BandStrip: View {
             let w = g.size.width
             let xl = x(low, w), xh = x(high, w)
             ZStack(alignment: .topLeading) {
-                // Zones: faint segments with their names centred below.
+                // The track is the live spectrum on the same axis: bars the trackpad plays glow.
+                let n = max(1, spectrum.count)
+                let barW = w / CGFloat(n)
+                ForEach(0..<n, id: \.self) { i in
+                    let v = i < spectrum.count ? spectrum[i] : 0
+                    let hz = r.lowerBound * pow(r.upperBound / r.lowerBound, (Double(i) + 0.5) / Double(n))
+                    let inBand = hz >= low && hz <= high
+                    let h = 3 + 25 * CGFloat(live ? v : 0)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(inBand ? (live ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.5))) : AnyShapeStyle(Color.white.opacity(0.16)))
+                        .frame(width: max(1.5, barW - 2), height: h)
+                        .offset(x: CGFloat(i) * barW + 1, y: 30 - h)
+                }
+                // Zone names under the track.
                 ForEach(LowBandControl.zones, id: \.name) { z in
                     let a = x(z.from, w), b = x(z.to, w)
-                    Capsule().fill(Color.white.opacity(0.08))
-                        .frame(width: b - a - 2, height: 6)
-                        .offset(x: a + 1, y: 8)
                     Text(z.name)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(high > z.from && low < z.to ? Color.white.opacity(0.9) : Theme.secondary.opacity(0.6))
                         .fixedSize()
                         .frame(width: b - a)
-                        .offset(x: a, y: 26)
+                        .offset(x: a, y: 40)
                 }
+                // The band itself: a thin bar along the bottom of the track, handles on it.
                 Capsule().fill(Color.white.opacity(0.85))
-                    .frame(width: max(6, xh - xl), height: 6)
-                    .offset(x: xl, y: 8)
-                handle.offset(x: xl - 8, y: 3)
+                    .frame(width: max(4, xh - xl), height: 3)
+                    .offset(x: xl, y: 31)
+                handle.offset(x: xl - 8, y: 24.5)
                     .accessibilityElement()
                     .accessibilityLabel("Depth")
                     .accessibilityValue("\(Int(low)) hertz")
                     .accessibilityAdjustableAction { dir in low = max(r.lowerBound, min(high / 1.5, low * (dir == .increment ? 1.1 : 0.9))).rounded() }
-                handle.offset(x: xh - 8, y: 3)
+                handle.offset(x: xh - 8, y: 24.5)
                     .accessibilityElement()
                     .accessibilityLabel("How much of the song")
                     .accessibilityValue("up to \(Int(high)) hertz")
                     .accessibilityAdjustableAction { dir in high = max(low * 1.5, min(r.upperBound, high * (dir == .increment ? 1.1 : 0.9))).rounded() }
             }
-            .frame(width: w, height: 40, alignment: .topLeading)
+            .frame(width: w, height: 54, alignment: .topLeading)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { d in
@@ -293,7 +308,8 @@ struct BandStrip: View {
                 }
                 .onEnded { _ in Detents.last["band"] = nil })
         }
-        .frame(height: 40)
+        .frame(height: 54)
+        .animation(.linear(duration: 0.06), value: spectrum)
     }
 
     private var handle: some View {
@@ -368,40 +384,6 @@ struct ValueSlider: View {
 /// Last quarter each slider sat in (no @State: the Command Line Tools ship without SwiftUI's macro plugin).
 @MainActor enum Detents { static var last: [String: Int] = [:] }
 
-/// The visualizer: what the Mac is playing, 30 Hz to 8 kHz, with the note the trackpad is on.
-struct SpectrumStrip: View {
-    @ObservedObject var engine: Engine
-
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(Array(engine.spectrum.enumerated()), id: \.offset) { i, v in
-                    // Bars the trackpad is playing (inside the Frequencies band) glow; the rest stay quiet.
-                    let hz = 30 * pow(8000 / 30, (Double(i) + 0.5) / Double(engine.spectrum.count))
-                    let inBand = hz >= engine.rumbleHz && hz <= engine.crossover
-                    Capsule()
-                        .fill(inBand && engine.enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.28)))
-                        .frame(height: max(2, 26 * v))
-                }
-            }
-            .frame(height: 26, alignment: .bottom)
-            HStack {
-                Text("30 Hz").foregroundStyle(Theme.secondary.opacity(0.6))
-                Spacer()
-                Text(engine.enabled && !engine.note.isEmpty ? "trackpad ♪ " + engine.note : " ")
-                    .foregroundStyle(Theme.secondary)
-                Spacer()
-                Text("8 kHz").foregroundStyle(Theme.secondary.opacity(0.6))
-            }
-            .font(.system(size: 9, weight: .medium).monospacedDigit())
-        }
-        .animation(.linear(duration: 0.06), value: engine.spectrum)
-        .accessibilityElement()
-        .accessibilityLabel("Spectrum")
-        .accessibilityValue(engine.note.isEmpty ? "" : "Trackpad playing \(engine.note)")
-    }
-}
-
 /// cliamp now playing: title, artist, progress and transport. Start a playlist if cliamp is idle.
 struct NowPlaying: View {
     @ObservedObject var player: CliampBridge
@@ -418,18 +400,24 @@ struct NowPlaying: View {
                     Text(player.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
                     Text(player.artist.isEmpty ? "cliamp" : player.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
                     if player.duration > 0 {
-                        GeometryReader { g in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Color.white.opacity(0.1))
-                                Capsule().fill(Color.white.opacity(0.7)).frame(width: g.size.width * min(1, player.position / player.duration))
+                        HStack(spacing: 6) {
+                            GeometryReader { g in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.white.opacity(0.1))
+                                    Capsule().fill(Color.white.opacity(0.7)).frame(width: g.size.width * min(1, player.position / player.duration))
+                                }
                             }
+                            .frame(height: 3)
+                            Text(Self.time(player.position) + " / " + Self.time(player.duration))
+                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Theme.secondary)
+                                .fixedSize()
                         }
-                        .frame(height: 3)
                         .padding(.top, 2)
                     }
                 }
                 Spacer(minLength: 4)
-                HStack(spacing: 12) {
+                HStack(spacing: 2) {
                     transport("backward.fill", "Previous track") { player.prev() }
                     transport(player.playing ? "pause.fill" : "play.fill", player.playing ? "Pause" : "Play") { player.toggle() }
                     transport("forward.fill", "Next track") { player.next() }
@@ -453,9 +441,13 @@ struct NowPlaying: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
     }
 
+    static func time(_ s: Double) -> String { String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) }
+
     private func transport(_ symbol: String, _ label: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)

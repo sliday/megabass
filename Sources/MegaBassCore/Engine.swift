@@ -24,8 +24,8 @@ public final class Engine: ObservableObject {
     @Published public private(set) var note = ""
     @Published public private(set) var kickPulse: Double = 0
     @Published public private(set) var history: [Double] = Array(repeating: 0, count: 32)
-    /// 28 log-spaced bands, 30 Hz to 8 kHz, 0...1: what the Mac is playing, for the visualizer.
-    @Published public private(set) var spectrum: [Double] = Array(repeating: 0, count: 28)
+    /// 40 log-spaced bands, 20 Hz to 4 kHz, 0...1: what the Mac is playing, drawn as the Frequencies track.
+    @Published public private(set) var spectrum: [Double] = Array(repeating: 0, count: 40)
 
     private let defaults = UserDefaults.standard
     private var motor: Motor?

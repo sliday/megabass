@@ -2,7 +2,8 @@ import Accelerate
 import Foundation
 
 /// Log-spaced band levels (0...1) of whatever the Mac plays, for the popover's visualizer.
-/// 2048-point FFT every ~33 ms; bands from 30 Hz to 8 kHz; auto-gained over a 60 dB window.
+/// 2048-point FFT every ~33 ms; bands from 20 Hz to 4 kHz (the trackpad's range, the same axis as
+/// the Frequencies control); auto-gained over a 60 dB window.
 public final class SpectrumAnalyzer {
     public let sampleRate: Double
     public let bandCount: Int
@@ -19,7 +20,9 @@ public final class SpectrumAnalyzer {
     private let edges: [Int]
     private var peakDB: Float = -60
 
-    public init(sampleRate: Double, bands: Int = 28) {
+    public static let range = 20.0...4000.0
+
+    public init(sampleRate: Double, bands: Int = 40) {
         self.sampleRate = sampleRate
         bandCount = bands
         setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
@@ -34,7 +37,7 @@ public final class SpectrumAnalyzer {
         let size = 2048
         let binHz = sampleRate / Double(size)
         edges = (0...bands).map { i in
-            let hz = 30 * pow(8000 / 30, Double(i) / Double(bands))
+            let hz = Self.range.lowerBound * pow(Self.range.upperBound / Self.range.lowerBound, Double(i) / Double(bands))
             return max(1, min(size / 2 - 1, Int((hz / binHz).rounded())))
         }
     }
