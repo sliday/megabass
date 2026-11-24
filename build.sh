@@ -5,7 +5,9 @@ cd "$(dirname "$0")"
 swift build -c release --product MegaBass
 app=build/megabass.app
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp -f .build/release/MegaBass "$app/Contents/MacOS/MegaBass"
+# Replace by rename: overwriting a running signed binary in place gets it killed.
+cp -f .build/release/MegaBass "$app/Contents/MacOS/MegaBass.new"
+mv -f "$app/Contents/MacOS/MegaBass.new" "$app/Contents/MacOS/MegaBass"
 cp -f Resources/Info.plist "$app/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then
     cp -f Resources/AppIcon.icns "$app/Contents/Resources/"

@@ -24,6 +24,8 @@ public final class Engine: ObservableObject {
     @Published public private(set) var note = ""
     @Published public private(set) var kickPulse: Double = 0
     @Published public private(set) var history: [Double] = Array(repeating: 0, count: 32)
+    /// 28 log-spaced bands, 30 Hz to 8 kHz, 0...1: what the Mac is playing, for the visualizer.
+    @Published public private(set) var spectrum: [Double] = Array(repeating: 0, count: 28)
 
     private let defaults = UserDefaults.standard
     private var motor: Motor?
@@ -35,7 +37,8 @@ public final class Engine: ObservableObject {
     private var frameTick = 0
     private var askedPermission = false
 
-    public init() {
+    /// `restore`: switch on at launch if megabass was on when it last ran.
+    public init(restore: Bool = true) {
         mode = BassMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .bass
         intensity = defaults.object(forKey: "intensity") as? Double ?? 0.8
         crossover = defaults.object(forKey: "crossover") as? Double ?? 100
@@ -45,10 +48,20 @@ public final class Engine: ObservableObject {
         AudioDevices.observeDefaultOutput { [weak self] in
             Task { @MainActor in self?.outputChanged() }
         }
-        if defaults.bool(forKey: "enabled") { setEnabled(true) }
+        if restore, defaults.bool(forKey: "enabled") { setEnabled(true) }
     }
 
     public var demoPlaying: Bool { demo.playing }
+
+    /// One line of live diagnostics (input level, bass periods and tones per second, motor rate, sync).
+    public func diagnosticsLine() -> String {
+        let d = pipeline.takeDiag()
+        let st = voice?.status ?? VoiceStatus()
+        let perm: String = switch AudioCapturePermission.state { case .granted: "granted"; case .denied: "denied"; case .unknown: "unknown" }
+        return String(format: "%@ src=%@ out=\"%@\" perm=%@ mode=%@ band=%.0f-%.0fHz input=%.1fdBFS cycles/s=%d tones/s=%d act/s=%d late=%+.0fms note=%@",
+                      ISO8601DateFormatter().string(from: Date()), "\(source)", outputName, perm, mode.rawValue, rumbleHz, crossover,
+                      d.rmsDB, d.cycles, d.tones, st.actuationsPerSecond, st.mirrorLate * 1000, st.noteName.isEmpty ? "-" : st.noteName)
+    }
     public var demoSilent: Bool {
         get { demo.silent }
         set { demo.silent = newValue }
@@ -72,6 +85,13 @@ public final class Engine: ObservableObject {
             source = .none
             stopMeters()
         }
+    }
+
+    /// Stops everything without changing the saved on/off state (app quit).
+    public func shutdown() {
+        demo.stop()
+        tap.stop()
+        voice?.stop()
     }
 
     public func toggleDemo() {
@@ -179,6 +199,7 @@ public final class Engine: ObservableObject {
         meterTimer = nil
         level = 0; bassLevel = 0; note = ""; kickPulse = 0
         history = Array(repeating: 0, count: history.count)
+        spectrum = Array(repeating: 0, count: spectrum.count)
     }
 
     private func tickMeters() {
@@ -190,6 +211,11 @@ public final class Engine: ObservableObject {
         note = s.noteName
         let sinceKick = Clock.now() - s.kickAt
         kickPulse = sinceKick < 0.25 ? 1 - sinceKick / 0.25 : 0
+        // Visualizer: fast rise, slow fall.
+        let sp = pipeline.lastSpectrum
+        if sp.count == spectrum.count {
+            spectrum = zip(spectrum, sp).map { old, new in max(Double(new), old * 0.82) }
+        }
         frameTick += 1
         if frameTick % 2 == 0 {
             history.removeFirst()
@@ -205,6 +231,18 @@ final class Pipeline: @unchecked Sendable {
     private var analyzer: BassAnalyzer?
     private var cycles: CycleTracker?
     private var tones: ToneTracker?
+    private var spectrumAnalyzer: SpectrumAnalyzer?
+    private var _spectrum: [Float] = []
+    var lastSpectrum: [Float] { lock.withLock { _spectrum } }
+    // Diagnostics, reset each read.
+    private var diagSq = 0.0, diagN = 0, diagCycles = 0, diagTones = 0
+    func takeDiag() -> (rmsDB: Double, cycles: Int, tones: Int) {
+        lock.withLock {
+            let r = diagN > 0 ? 20 * log10(sqrt(diagSq / Double(diagN)) + 1e-9) : -180
+            defer { diagSq = 0; diagN = 0; diagCycles = 0; diagTones = 0 }
+            return (r, diagCycles, diagTones)
+        }
+    }
     private var _voice: HapticVoice?
     private var _last = BassFrame()
 
@@ -234,13 +272,19 @@ final class Pipeline: @unchecked Sendable {
         // Bass (cycle by cycle) up to 160 Hz; prominent tones from there up to the High handle.
         cycles!.setBand(low: low, high: min(crossover, Self.split))
         let v = voice
-        if let v { cycles!.process(samples, time: host + offset) { v.push($0) } }
+        var sq = 0.0
+        for x in samples { sq += Double(x * x) }
+        var nCycles = 0, nTones = 0
+        if let v { cycles!.process(samples, time: host + offset) { v.push($0); nCycles += 1 } }
+        if spectrumAnalyzer == nil || spectrumAnalyzer!.sampleRate != sampleRate { spectrumAnalyzer = SpectrumAnalyzer(sampleRate: sampleRate) }
+        spectrumAnalyzer!.process(samples) { bands in lock.withLock { _spectrum = bands } }
         if crossover > Self.split * 1.2 {
             if tones == nil || tones!.sampleRate != sampleRate { tones = ToneTracker(sampleRate: sampleRate) }
             tones!.setBand(low: max(low, Self.split), high: crossover)
             tones!.bassHz = Double(lastFrame.pitch)
-            if let v { tones!.process(samples, time: host + offset) { v.push($0) } }
+            if let v { tones!.process(samples, time: host + offset) { t in v.push(t); if t.hz > 0 { nTones += 1 } } }
         }
+        lock.withLock { diagSq += sq; diagN += samples.count; diagCycles += nCycles; diagTones += nTones }
         var last: BassFrame?
         analyzer!.process(samples, time: host + offset) { f in
             v?.push(f)
