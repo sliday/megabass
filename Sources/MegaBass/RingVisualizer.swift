@@ -22,6 +22,16 @@ final class RingSim {
 
     var levels: [Double] = []
     var heat: [Double] = []
+    /// Outward kick on the ridge from arriving pulses, per band; springs back in ~150 ms.
+    var push: [Double] = []
+
+    /// A bright packet racing up a stalk from the planet to the ridge (vizamp's Pulse + Impact).
+    struct Packet { var stalk: Int; var travel: Double; var speed: Double; var energy: Double }
+    static let stalks = 48
+    var packets: [Packet] = []
+    private var stalkPrior = [Double](repeating: 0, count: RingSim.stalks)
+    private var stalkCooldown = [Double](repeating: 0, count: RingSim.stalks)
+    func stalkAngle(_ i: Int) -> Double { -.pi / 2 + Double(i) / Double(Self.stalks) * 2 * .pi }
     private var prior: [Double] = []
     var grains: [Grain] = []
     var clock: Double = 0
@@ -46,6 +56,7 @@ final class RingSim {
         clock += dt
         if levels.count != spectrum.count {
             levels = spectrum; prior = spectrum; heat = Array(repeating: 0, count: spectrum.count)
+            push = Array(repeating: 0, count: spectrum.count)
         }
         // Ease toward the 30 Hz spectrum so the ridge moves at frame rate.
         // Contrast: the spectrum is auto-gained over 60 dB, so most bands sit mid-scale. Below 30 %
@@ -63,6 +74,7 @@ final class RingSim {
         }
         prior = levels
 
+        advancePackets(dt)
         if grains.isEmpty { grains = (0..<260).map { _ in newGrain(rest: true) } }
         advanceGrains(dt)
         radiate(dt)
@@ -102,8 +114,55 @@ final class RingSim {
 
     func heat(at th: Double) -> Double { sample(heat, th) }
 
-    /// The ridge's radius at an angle.
-    func surface(_ th: Double) -> Double { base + pow(max(0, min(1, level(at: th))), 0.85) * depth }
+    /// The ridge's radius at an angle, plus any kick from pulses that just hit it.
+    func surface(_ th: Double) -> Double {
+        base + pow(max(0, min(1, level(at: th))), 0.85) * depth + sample(push, th) * depth * 0.55
+    }
+
+    private func band(at th: Double) -> Int { min(levels.count - 1, Int(lap(th) * Double(levels.count))) }
+
+    /// Spawns, moves and lands pulses. A stalk fires when its band jumps, and also at a rate set by
+    /// its loudness, so loud stalks keep pulsing; landing pushes the ridge out, heats it, throws sparks.
+    private func advancePackets(_ dt: Double) {
+        guard !levels.isEmpty else { return }
+        for i in push.indices { push[i] *= exp(-dt / 0.15) }
+        for i in 0..<Self.stalks {
+            let th = stalkAngle(i), lv = level(at: th)
+            let rise = lv - stalkPrior[i]
+            stalkPrior[i] = lv
+            stalkCooldown[i] -= dt
+            guard stalkCooldown[i] <= 0, lv > 0.08 else { continue }
+            let onset = rise > 0.06
+            if onset || rand(0, 1) < lv * 1.6 * dt {
+                packets.append(Packet(stalk: i, travel: 0, speed: rand(5, 8), energy: min(1, (onset ? rise * 5 : 0) + lv * 0.5)))
+                stalkCooldown[i] = rand(0.1, 0.18)
+            }
+        }
+        var landed: [Packet] = []
+        for k in packets.indices.reversed() {
+            packets[k].travel += dt * packets[k].speed
+            if packets[k].travel >= 1 { landed.append(packets[k]); packets.remove(at: k) }
+        }
+        for p in landed {
+            let th = stalkAngle(p.stalk), b = band(at: th)
+            push[b] = min(0.9, push[b] + p.energy * 0.6)
+            heat[b] = min(1, heat[b] + p.energy * 0.5)
+            hit(at: th, energy: p.energy)
+        }
+        if packets.count > 120 { packets.removeFirst(packets.count - 120) }
+    }
+
+    /// A few sparks knocked off the ridge where a pulse lands.
+    private func hit(at th: Double, energy: Double) {
+        let near = grains.indices.filter { !grains[$0].air && angularDistance(grains[$0].th, th) < 0.12 }.prefix(2 + Int(energy * 4))
+        for i in near {
+            grains[i].vr = rand(50, 100) * (0.6 + energy)
+            grains[i].vt = rand(-25, 25)
+            grains[i].air = true
+            grains[i].spark = rand(0.15, 0.3)
+            grains[i].glow = 1
+        }
+    }
 
     // MARK: Grains (vizamp Sand, in polar form: outward is "up", gravity pulls to the button)
 
@@ -345,6 +404,23 @@ struct RingVisualizer: View {
             p.move(to: pt(c, th, sim.base))
             p.addCurve(to: pt(c, th, tip), control1: pt(c, th + sway * 0.65, sim.base + rise * 0.35), control2: pt(c, th - sway, sim.base + rise * 0.75))
             ctx.stroke(p, with: .color(Theme.hot.opacity(floorFade(lv) * 0.45)), lineWidth: 1.5)
+        }
+
+        // Pulses racing up the stalks: white-hot throbbing dots with a short tail.
+        for p in sim.packets {
+            let th = sim.stalkAngle(p.stalk)
+            let tip = sim.surface(th)
+            let r = sim.base + (tip - sim.base) * p.travel
+            let tailR = max(sim.base, r - 9 * p.speed / 6)
+            let head = pt(c, th, r), tail = pt(c, th, tailR)
+            let throb = 0.75 + 0.25 * sin(sim.clock * 40 + Double(p.stalk))
+            let color = Heat.color(min(1, 0.55 + p.energy * 0.45))
+            var streak = Path(); streak.move(to: tail); streak.addLine(to: head)
+            ctx.stroke(streak, with: .linearGradient(Gradient(colors: [color.opacity(0), color.opacity(0.8 * throb)]), startPoint: tail, endPoint: head),
+                       style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+            let d = 2.2 + 1.6 * p.energy * throb
+            ctx.fill(Path(ellipseIn: CGRect(x: head.x - d / 2, y: head.y - d / 2, width: d, height: d)), with: .color(.white.opacity(0.95 * throb)))
+            ctx.fill(Path(ellipseIn: CGRect(x: head.x - d, y: head.y - d, width: d * 2, height: d * 2)), with: .color(color.opacity(0.3 * throb)))
         }
 
         // Motion blur on the ridge: the last frames' shapes, fainter with age.
