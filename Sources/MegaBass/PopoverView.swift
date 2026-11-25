@@ -63,12 +63,12 @@ struct PopoverView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Turn trackpad haptics on or off. Clicking the planet does the same.")
-                Group {
-                    HapticPad(engine: engine)
-                    LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
-                }
-                .opacity(engine.enabled ? 1 : 0.4)
+                // Controls first, then what they produce: Range, Strength, then the trackpad.
+                LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
+                    .opacity(engine.enabled ? 1 : 0.4)
                 ValueSlider(label: "Strength", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                HapticPad(engine: engine)
+                    .opacity(engine.enabled ? 1 : 0.4)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text("Overdrive").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)

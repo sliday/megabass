@@ -42,10 +42,17 @@ struct HapticPad: View {
             let spacing = max(5, 26 - log2(max(20, hz) / 20) * 5)
             let speed = 22 + hz * 0.08
             var r = (t * speed).truncatingRemainder(dividingBy: spacing)
+            // Motion blur: each ring drags a short fading trail inward, as long as it moves in ~25 ms.
+            let trail = min(spacing * 0.8, speed * 0.025)
             while r < pad.width * 0.55 {
                 let a = (1 - r / (pad.width * 0.55)) * min(1, level * 1.5)
-                inside.stroke(Path(ellipseIn: CGRect(x: c.x - r * 1.6, y: c.y - r * 0.55, width: r * 3.2, height: r * 1.1)),
-                              with: .color(Theme.hot.opacity(a)), lineWidth: 1.4)
+                for k in 0..<5 {
+                    let rr = r - trail * Double(k) / 4
+                    guard rr > 0 else { continue }
+                    let fade = k == 0 ? 1.0 : (1 - Double(k) / 5) * 0.45
+                    inside.stroke(Path(ellipseIn: CGRect(x: c.x - rr * 1.6, y: c.y - rr * 0.55, width: rr * 3.2, height: rr * 1.1)),
+                                  with: .color(Theme.hot.opacity(a * fade)), lineWidth: k == 0 ? 1.4 : 2.2)
+                }
                 r += spacing
             }
             let kick = engine.kickPulse
