@@ -500,30 +500,22 @@ struct NowPlaying: View {
         let now = hub.now
         VStack(alignment: .leading, spacing: 8) {
             sourceMenu
-            // Title and artist share one centre line with the transport.
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+            // Title and artist get the full width; the transport sits under the progress line.
+            VStack(alignment: .leading, spacing: 2) {
                     if now.running && !now.title.isEmpty {
                         HStack(spacing: 5) {
+                            // A long title truncates; the heart stays next to it, and hover shows the whole title.
                             Text(now.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                            heart(size: 10)
+                                .truncationMode(.tail).help(now.title)
+                            heart(size: 10).fixedSize().layoutPriority(1)
                         }
                         Text(now.artist.isEmpty ? hub.active.name : now.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
                     } else {
                         Text("Nothing playing").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                         Text("Pick a station or a player above").font(.system(size: 11)).foregroundStyle(Theme.secondary)
                     }
-                }
-                Spacer(minLength: 4)
-                HStack(spacing: 2) {
-                    transport("backward.fill", "Previous track") { hub.prev() }
-                    transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
-                        // Idle with favourites saved: Play plays them.
-                        if now.running { hub.toggle() } else if !hub.favourites.isEmpty { hub.playFavourites() } else { hub.select(hub.active) }
-                    }
-                    transport("forward.fill", "Next track") { hub.next() }
-                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             // Full-width progress, times at both ends (Control Center style).
             if now.running && now.duration > 0 {
                 // Click or drag the line to seek; it thickens and previews the time while you scrub.
@@ -557,14 +549,19 @@ struct NowPlaying: View {
                         hub.seek(fraction: min(1, max(0, shown + (dir == .increment ? 0.05 : -0.05))))
                     }
                     .help("Click or drag to jump in the song")
+                    // Times at the ends, the transport between them.
                     HStack {
-                        Text(Self.time(pos))
-                        Spacer()
-                        Text("-" + Self.time(max(0, now.duration - pos)))
+                        Text(Self.time(pos)).frame(width: 40, alignment: .leading)
+                        Spacer(minLength: 0)
+                        controls(now)
+                        Spacer(minLength: 0)
+                        Text("-" + Self.time(max(0, now.duration - pos))).frame(width: 40, alignment: .trailing)
                     }
                     .font(.system(size: 9, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.secondary)
                 }
+            } else {
+                controls(now).frame(maxWidth: .infinity)          // live radio: no line, transport centred
             }
         }
         .padding(12)
@@ -573,6 +570,18 @@ struct NowPlaying: View {
     }
 
     /// The pill: what's playing (a cliamp station, Spotify, Music). Its menu switches players and stations.
+    /// Previous, play/pause, next.
+    private func controls(_ now: NowPlayingHub.Snapshot) -> some View {
+        HStack(spacing: 2) {
+            transport("backward.fill", "Previous track") { hub.prev() }
+            transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
+                // Idle with favourites saved: Play plays them.
+                if now.running { hub.toggle() } else if !hub.favourites.isEmpty { hub.playFavourites() } else { hub.select(hub.active) }
+            }
+            transport("forward.fill", "Next track") { hub.next() }
+        }
+    }
+
     /// Favourite this track: a quiet outline heart that fills in the palette when set.
     private func heart(size: CGFloat) -> some View {
         Button { hub.toggleFavourite() } label: {

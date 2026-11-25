@@ -221,6 +221,7 @@ struct WidgetView: View {
                 if !hub.now.title.isEmpty {
                     HStack(spacing: 4) {
                         Text(hub.now.title).font(.system(size: max(9, side * 0.045), weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                            .truncationMode(.tail)
                         Button { hub.toggleFavourite() } label: {
                             Image(systemName: hub.isFavourite ? "heart.fill" : "heart")
                                 .font(.system(size: max(8, side * 0.04), weight: .semibold))
@@ -228,7 +229,9 @@ struct WidgetView: View {
                         }
                         .buttonStyle(.plain)
                         .help(hub.isFavourite ? "Remove from favourites" : "Add to favourites")
+                        .fixedSize().layoutPriority(1)
                     }
+                    .padding(.horizontal, 6)
                 }
                 HStack(spacing: 6) {
                     chip("backward.fill", "Previous track") { hub.prev() }
