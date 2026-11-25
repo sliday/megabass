@@ -148,14 +148,19 @@ final class RingSim {
 
     // MARK: Prominences
 
-    /// A solar prominence: a spray of tiny sparks blasting off the planet's limb where a band's
-    /// level shoots up. Each spark is ballistic: it arcs out under the planet's gravity and falls
-    /// back, so a loop of them traces the prominence's curve. White-hot at launch, cooling to red.
+    /// A solar prominence: a thin hose of ultra-hot sparks streaming off the planet's limb where a
+    /// band's level shoots up. Each spark is ballistic: it arcs out under the planet's gravity and
+    /// falls back, so the stream traces the prominence's loop. White-hot at launch, cooling to red.
     struct Prominence { var th: Double; var span: Double; var born: Double; var power: Double; var side: Double; var plume: Bool; var emitted = 0 }
     var prominences: [Prominence] = []
     /// A prominence spark in polar coordinates around the planet; `l` is its angular momentum (r²ω).
-    struct Sprinkle { var r: Double; var th: Double; var vr: Double; var l: Double; var born: Double; var life: Double; var size: Double }
+    /// Tracers (every fifth spark) record where they flew.
+    struct Sprinkle { var r: Double; var th: Double; var vr: Double; var l: Double; var born: Double; var life: Double; var size: Double
+                      var tracer = false; var trail: [(th: Double, r: Double, t: Double)] = [] }
     var sprinkles: [Sprinkle] = []
+    /// Light trails of landed tracers, fading over `trailLife`.
+    var streaks: [[(th: Double, r: Double, t: Double)]] = []
+    static let trailLife = 2.5
     private var promCool: [Double] = []
     private var promGap = 0.0, promRef = 7.0
 
@@ -184,19 +189,20 @@ final class RingSim {
             prominences.append(Prominence(th: angle(ofBand: i), span: rand(0.22, 0.5), born: clock, power: power,
                                           side: rand(0, 1) < 0.5 ? -1 : 1, plume: rand(0, 1) < 0.3))
         }
-        // Each prominence sprays its sparks over its first 0.3 s.
+        // Each prominence streams a thin hose of sparks for 0.6 s: one nozzle, nearly one velocity,
+        // swept slowly so the hose sways. A loop leans toward the far foot; a plume goes up and out.
         for k in prominences.indices {
             let p = prominences[k], age = clock - p.born
-            let total = Int(36 + 60 * p.power)
-            let due = min(total, Int(Double(total) * min(1, age / 0.3)) + 1)
+            let total = Int(50 + 70 * p.power)
+            let due = min(total, Int(Double(total) * min(1, age / 0.6)) + 1)
+            let th0 = p.plume ? p.th : p.th - p.side * p.span / 2
+            let vt0 = p.plume ? 8 * p.side : p.side * (30 + 60 * p.span)
+            let vr0 = (120 + 60 * p.power) * (1 + 0.1 * sin(age * 9 + p.th * 5))
             while prominences[k].emitted < due {
                 prominences[k].emitted += 1
-                // A loop: sparks leave one foot toward the other and arc over. A plume: straight up and out.
-                let th = p.plume ? p.th + rand(-0.06, 0.06) : p.th - p.side * p.span / 2 + rand(-0.05, 0.05)
-                let vt = p.plume ? rand(-18, 18) : p.side * rand(25, 75)
-                let vr = rand(100, 190) * (0.55 + 0.45 * p.power)
-                sprinkles.append(Sprinkle(r: base - 1, th: th, vr: vr, l: (base - 1) * vt, born: clock,
-                                          life: rand(1.2, 2.6), size: rand(0.6, 1.5)))
+                sprinkles.append(Sprinkle(r: base - 1, th: th0 + rand(-0.004, 0.004), vr: vr0 * rand(0.96, 1.04),
+                                          l: (base - 1) * vt0 * rand(0.94, 1.06), born: clock, life: 3, size: rand(0.6, 1.2),
+                                          tracer: prominences[k].emitted % 5 == 0))
             }
         }
         prominences.removeAll { clock - $0.born > Self.linger($0) }
@@ -207,9 +213,14 @@ final class RingSim {
             q.vr += (-380 * pow(base / q.r, 2) + q.r * w * w) * dt
             q.r += q.vr * dt
             q.th += w * dt
+            if q.tracer, q.trail.last.map({ clock - $0.t > 0.035 }) ?? true { q.trail.append((q.th, q.r, clock)) }
             sprinkles[k] = q
         }
+        for q in sprinkles where q.tracer && (q.r < base - 2 || clock - q.born > q.life) {
+            streaks.append(q.trail + [(q.th, q.r, clock)])
+        }
         sprinkles.removeAll { $0.r < base - 2 || clock - $0.born > $0.life }
+        streaks.removeAll { ($0.last?.t ?? 0) < clock - Self.trailLife }
     }
 
     /// Interpolates a per-band array around the lap, wrapping highest into lowest at the seam.
@@ -581,6 +592,23 @@ struct RingVisualizer: View, Equatable {
     /// Prominences, additive: each spark a tiny streak along its flight, white-hot at launch and
     /// cooling along the blackbody ramp; sparks are batched into a few paths by temperature.
     private func drawProminences(_ g: GraphicsContext, _ c: CGPoint) {
+        // Light trails: every tracer's flight, live or landed, fading and cooling over 2.5 s.
+        var lines = [Path](repeating: Path(), count: 5)
+        func addTrail(_ tr: [(th: Double, r: Double, t: Double)]) {
+            guard tr.count > 1 else { return }
+            for i in 1..<tr.count {
+                let age = sim.clock - tr[i].t
+                guard age < RingSim.trailLife else { continue }
+                let b = min(4, Int(age / RingSim.trailLife * 5))
+                lines[b].move(to: pt(c, tr[i - 1].th, tr[i - 1].r)); lines[b].addLine(to: pt(c, tr[i].th, tr[i].r))
+            }
+        }
+        for q in sim.sprinkles where q.tracer { addTrail(q.trail) }
+        for st in sim.streaks { addTrail(st) }
+        for b in 0..<5 {
+            let f = 1 - (Double(b) + 0.5) / 5
+            g.stroke(lines[b], with: .color(Self.blackbody(0.3 + 0.7 * f).opacity(0.5 * f)), style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
+        }
         var cores = [Path](repeating: Path(), count: 5), halos = [Path](repeating: Path(), count: 5)
         var fades = [Double](repeating: 0, count: 5), counts = [Int](repeating: 0, count: 5)
         for q in sim.sprinkles {
