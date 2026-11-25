@@ -108,6 +108,13 @@ struct PopoverView: View {
                     .foregroundStyle(Theme.hot)
                     .accessibilityLabel("Status: \(alert.lowercased())")
             }
+            Button { hub.rollPlanet() } label: {
+                Image(systemName: "dice").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.secondary).frame(width: 20, height: 20).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("New random planet for this song")
+            .accessibilityLabel("Random planet")
             Button { withAnimation(.easeOut(duration: 0.2)) { layout.compact = true } } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.secondary).frame(width: 20, height: 20).contentShape(Rectangle())

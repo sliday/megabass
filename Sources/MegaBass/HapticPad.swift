@@ -212,6 +212,7 @@ struct WidgetView: View {
         VStack {
             HStack {
                 Spacer()
+                chip("dice", "New random planet for this song") { hub.rollPlanet() }
                 chip("arrow.up.left.and.arrow.down.right", "Open the full panel") { LayoutState.shared.compact = false }
                 chip("xmark", "Close the widget") { LayoutState.shared.compact = false; LayoutState.shared.hideAll?() }
             }
