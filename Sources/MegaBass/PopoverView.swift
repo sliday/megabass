@@ -150,7 +150,7 @@ struct PowerRing: View {
                     // A small gas giant with an atmosphere; the halo spills past the 96 pt hit area.
                     // The power icon lives on the planet's surface (see PlanetSpin).
                     PlanetView(engine: engine, radius: 48, style: planet)
-                        .frame(width: 164, height: 164)
+                        .frame(width: 200, height: 200)
                 }
                 .frame(width: 96, height: 96)
                 .contentShape(Circle())

@@ -63,9 +63,11 @@ struct PlanetView: View {
         let deep = mix(hot, .black, 0.55)
         let st = style
         let atm = st.atmosphere
+        OrbitSim.shared.step(t: t, kick: kick, levels: on ? RingSim.shared.levels : [], R: R, on: on)
 
         // Rings (if this planet has them): the far half goes behind the planet.
         if st.rings { drawRings(ctx, c: c, R: R, front: false, color: heat, on: on) }
+        drawMoons(ctx, c: c, R: R, front: false, color: heat, on: on)
 
         // Thin atmosphere: a tight bright shell on the limb plus two faint outer layers.
         if on {
@@ -239,6 +241,7 @@ struct PlanetView: View {
 
         // Rings: the near half crosses in front of the planet.
         if st.rings { drawRings(ctx, c: c, R: R, front: true, color: heat, on: on) }
+        drawMoons(ctx, c: c, R: R, front: true, color: heat, on: on)
     }
 
     /// Base colours per planet type: base (ocean/ground), two land tones, clouds, and a glow for
@@ -260,18 +263,132 @@ struct PlanetView: View {
         }
     }
 
-    /// Thin ellipses at the ring's tilt; `front` draws the half nearer the camera.
+    // MARK: Rings and moons (from the Fable brainstorm: kick moon, band-per-line rings, shepherds)
+
+    /// The orbital plane: the ring's tilt, or a gentler version of the axial tilt without rings.
+    private var planeTilt: Double { style.rings ? style.ringTilt : style.tilt * 0.6 }
+
+    /// Ring lines follow six band groups; a kick sends a brightness ripple outward, 35 ms per line.
     private func drawRings(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool) {
+        let orbit = OrbitSim.shared
         var g = ctx
         g.translateBy(x: c.x, y: c.y)
-        g.rotate(by: .radians(style.ringTilt))
-        g.clip(to: Path(CGRect(x: -R * 2, y: front ? 0 : -R * 2, width: R * 4, height: R * 2)))
+        g.rotate(by: .radians(planeTilt))
+        g.clip(to: Path(CGRect(x: -R * 3, y: front ? 0 : -R * 3, width: R * 6, height: R * 3)))
         let inner = R * 1.18, outer = R * (1.18 + style.ringWidth)
         let lines = 6
         for k in 0..<lines {
-            let rx = inner + (outer - inner) * Double(k) / Double(lines - 1), ry = rx * 0.24
-            let alpha = (on ? 0.5 : 0.18) * (0.5 + 0.5 * sin(Double(k) * 2.1 + style.ringWidth * 9)) * (front ? 1 : 0.6)
-            g.stroke(Path(ellipseIn: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2)), with: .color(color.opacity(alpha)), lineWidth: 1.6)
+            let lv = on ? orbit.groups[k] : 0
+            let since = orbit.time - orbit.kickAt - Double(k) * 0.035
+            let bump = on && since >= 0 && since < 0.07 ? sin(.pi * since / 0.07) : 0
+            let rx = (inner + (outer - inner) * Double(k) / Double(lines - 1)) * (1 + 0.03 * bump), ry = rx * 0.24
+            let base = on ? 0.15 + 0.6 * lv : 0.12
+            let alpha = min(1, base + 0.5 * bump) * (front ? 1 : 0.6)
+            g.stroke(Path(ellipseIn: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2)),
+                     with: .color(color.opacity(alpha)), lineWidth: on ? 0.6 + 1.0 * lv + bump : 1.2)
         }
+        // Shepherd wakes: a bright 30° smear along the line their moon rides.
+        if on && style.rings {
+            for w in orbit.wakes {
+                let age = orbit.time - w.at
+                guard age < 0.3 else { continue }
+                let rx = w.outer ? outer : inner, ry = rx * 0.24
+                var arc = Path()
+                for j in 0...12 {
+                    let a = w.angle - 0.52 * Double(j) / 12
+                    let p = CGPoint(x: cos(a) * rx, y: sin(a) * ry)
+                    if j == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
+                }
+                g.stroke(arc, with: .color(Color.white.opacity(0.8 * (1 - age / 0.3))), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+        }
+    }
+
+    /// Kick moon and shepherds; `front` draws the ones on the near side of their orbit.
+    private func drawMoons(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool) {
+        let orbit = OrbitSim.shared
+        var g = ctx
+        g.translateBy(x: c.x, y: c.y)
+        g.rotate(by: .radians(planeTilt))
+        func moon(angle: Double, radius: Double, size: Double, glow: Double) {
+            guard (sin(angle) >= 0) == front else { return }
+            let p = CGPoint(x: cos(angle) * radius, y: sin(angle) * radius * 0.24)
+            let d = size * 2
+            g.fill(Path(ellipseIn: CGRect(x: p.x - d, y: p.y - d, width: d * 2, height: d * 2)),
+                   with: .radialGradient(Gradient(colors: [color.opacity(0.35 * glow), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
+            g.fill(Path(ellipseIn: CGRect(x: p.x - size, y: p.y - size, width: size * 2, height: size * 2)),
+                   with: .radialGradient(Gradient(colors: [.white, mix(color, .white, 0.3), mix(color, .black, 0.5)]),
+                                         center: CGPoint(x: p.x - size * 0.4, y: p.y - size * 0.4), startRadius: 0, endRadius: size * 1.6))
+        }
+        // Kick moon: flung out on a kick, springs back.
+        moon(angle: orbit.moonAngle, radius: R * 1.72 + orbit.spring, size: 3.2, glow: on ? 0.5 + orbit.flash : 0.2)
+        if style.rings {
+            let inner = R * 1.18, outer = R * (1.18 + style.ringWidth)
+            moon(angle: orbit.innerAngle, radius: inner, size: 1.8, glow: on ? 0.3 + orbit.groups[0] : 0.1)
+            moon(angle: orbit.outerAngle, radius: outer, size: 1.6, glow: on ? 0.3 + orbit.groups[5] : 0.1)
+        }
+        // Shock rings from the kick moon: 0 to 10 pt over 200 ms, fading.
+        if front && on {
+            for s in orbit.shocks {
+                let age = orbit.time - s.at
+                guard age < 0.2 else { continue }
+                let r = 2 + 10 * age / 0.2
+                g.stroke(Path(ellipseIn: CGRect(x: s.x - r, y: s.y - r, width: r * 2, height: r * 2)),
+                         with: .color(Color.white.opacity(0.7 * (1 - age / 0.2))), lineWidth: 1.2)
+            }
+        }
+    }
+}
+
+/// Orbit state for the rings and moons, advanced once per planet frame.
+@MainActor
+final class OrbitSim {
+    static let shared = OrbitSim()
+    struct Wake { var at: Double; var angle: Double; var outer: Bool }
+    var time = 0.0
+    var kickAt = -10.0
+    var groups = [Double](repeating: 0, count: 6)
+    var moonAngle = 0.4, innerAngle = 1.0, outerAngle = 3.0
+    var spring = 0.0, flash = 0.0
+    var shocks: [(at: Double, x: Double, y: Double)] = []
+    var wakes: [Wake] = []
+    private var springV = 0.0, lastKick = 0.0, prior = [Double](repeating: 0, count: 6)
+
+    func step(t: Double, kick: Double, levels: [Double], R: Double, on: Bool) {
+        let dt = time == 0 ? 0 : min(0.1, t - time)
+        time = t
+        // Six band groups, low to high.
+        if !levels.isEmpty {
+            let n = levels.count
+            for k in 0..<6 {
+                let a = k * n / 6, b = max(a + 1, (k + 1) * n / 6)
+                let v = levels[a..<b].reduce(0, +) / Double(b - a)
+                groups[k] += (v - groups[k]) * min(1, dt * 12)
+            }
+        }
+        let bass = groups[0]
+        moonAngle += dt * (0.6 + bass * 0.8)
+        innerAngle += dt * 0.9                 // inner orbits run faster (Kepler)
+        outerAngle += dt * 0.55
+        // Kick: fling the moon outward, flash, and fire a shock ring where it is.
+        if on && kick > lastKick + 0.35 {
+            kickAt = t
+            springV += 160
+            flash = 1
+            let r = R * 1.72 + spring
+            shocks.append((t, cos(moonAngle) * r, sin(moonAngle) * r * 0.24))
+        }
+        lastKick = kick
+        let acc = -250 * spring - 14 * springV                    // ~250 ms settle, slight overshoot
+        springV += acc * dt
+        spring += springV * dt
+        flash *= exp(-dt / 0.2)
+        // Shepherd wakes when their band group jumps.
+        for (k, outer) in [(0, false), (5, true)] where on && groups[k] - prior[k] > 0.12 {
+            wakes.append(Wake(at: t, angle: outer ? outerAngle : innerAngle, outer: outer))
+        }
+        prior = groups
+        shocks.removeAll { t - $0.at > 0.25 }
+        wakes.removeAll { t - $0.at > 0.35 }
     }
 }
