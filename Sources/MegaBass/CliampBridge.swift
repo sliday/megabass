@@ -13,6 +13,10 @@ final class CliampBridge: ObservableObject {
     @Published private(set) var position = 0.0
     @Published private(set) var duration = 0.0
     @Published private(set) var playlists: [String] = []
+    /// cliamp radio channels (radio.cliamp.stream): id and display name.
+    @Published private(set) var stations: [(id: String, name: String)] = []
+    /// The channel playing now, from the stream URL ("…/lofi/tracks/…" → "lofi"), or "".
+    @Published private(set) var station = ""
 
     private let path: String?
     private var timer: Timer?
@@ -29,6 +33,7 @@ final class CliampBridge: ObservableObject {
         guard installed, timer == nil else { return }
         refresh()
         loadPlaylists()
+        loadStations()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -56,6 +61,23 @@ final class CliampBridge: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refresh() }
     }
 
+    /// Switches cliamp to a radio channel. Starts the headless daemon first if cliamp isn't running.
+    func play(station id: String) {
+        let load = { [weak self] in
+            self?.run(["remote", "call", "provider.load", "--params", "{\"provider\":\"cliamp\",\"playlist\":\"\(id)\"}", "--wait"]) { _ in self?.refresh() }
+        }
+        station = id
+        if running { load(); return }
+        guard let path else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = ["--daemon"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { load() }
+    }
+
     func refresh() {
         run(["status", "--json"]) { [weak self] data in
             guard let self else { return }
@@ -66,6 +88,7 @@ final class CliampBridge: ObservableObject {
             self.artist = s?.track?.artist ?? ""
             self.position = s?.position ?? 0
             self.duration = s?.duration ?? 0
+            self.station = Self.stationID(s?.track?.path) ?? (self.running ? self.station : "")
         }
     }
 
@@ -79,6 +102,26 @@ final class CliampBridge: ObservableObject {
                 return parts.dropLast().joined(separator: " ").trimmingCharacters(in: .whitespaces)
             }
         }
+    }
+
+    private func loadStations() {
+        run(["remote", "call", "provider.playlists", "--params", "{\"provider\":\"cliamp\"}", "--wait"]) { [weak self] data in
+            guard let self, let data, let r = try? JSONDecoder().decode(Playlists.self, from: data) else { return }
+            self.stations = (r.job?.result?.playlists ?? []).map { ($0.id, $0.name) }
+        }
+    }
+
+    /// "https://radio.cliamp.stream/lofi/tracks/…" → "lofi".
+    static func stationID(_ path: String?) -> String? {
+        guard let path, let u = URL(string: path), u.host == "radio.cliamp.stream" else { return nil }
+        return u.pathComponents.dropFirst().first
+    }
+
+    private struct Playlists: Decodable {
+        struct Job: Decodable { let result: Result? }
+        struct Result: Decodable { let playlists: [Item]? }
+        struct Item: Decodable { let id: String; let name: String }
+        let job: Job?
     }
 
     private func command(_ args: [String]) {
@@ -108,7 +151,7 @@ final class CliampBridge: ObservableObject {
     }
 
     private struct Status: Decodable {
-        struct Track: Decodable { let title: String?; let artist: String? }
+        struct Track: Decodable { let title: String?; let artist: String?; let path: String? }
         let ok: Bool?
         let state: String?
         let track: Track?

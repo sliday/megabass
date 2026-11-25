@@ -390,13 +390,9 @@ struct NowPlaying: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "music.note")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.secondary)
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
             if player.running && !player.title.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
+                    if !player.stations.isEmpty { stationMenu }
                     Text(player.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
                     Text(player.artist.isEmpty ? "cliamp" : player.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
                     if player.duration > 0 {
@@ -429,8 +425,17 @@ struct NowPlaying: View {
                 }
                 Spacer()
                 Menu("Play") {
-                    ForEach(player.playlists, id: \.self) { name in Button(name) { player.play(playlist: name) } }
-                    if player.playlists.isEmpty { Text("No playlists yet: run cliamp in Terminal") }
+                    if !player.stations.isEmpty {
+                        Section("cliamp radio") {
+                            ForEach(player.stations, id: \.id) { s in Button(s.name) { player.play(station: s.id) } }
+                        }
+                    }
+                    if !player.playlists.isEmpty {
+                        Section("Playlists") {
+                            ForEach(player.playlists, id: \.self) { name in Button(name) { player.play(playlist: name) } }
+                        }
+                    }
+                    if player.playlists.isEmpty && player.stations.isEmpty { Text("Nothing to play yet: run cliamp in Terminal") }
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -439,6 +444,33 @@ struct NowPlaying: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+    }
+
+    /// "📻 Lofi ▾": switch cliamp radio channels; the current one is checked.
+    private var stationMenu: some View {
+        Menu {
+            ForEach(player.stations, id: \.id) { s in
+                Button { player.play(station: s.id) } label: {
+                    if s.id == player.station { Label(s.name, systemImage: "checkmark") } else { Text(s.name) }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 9, weight: .semibold))
+                Text(player.stations.first { $0.id == player.station }?.name ?? "Stations")
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(Color.white.opacity(0.07)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Switch cliamp radio station")
+        .accessibilityLabel("Station")
     }
 
     static func time(_ s: Double) -> String { String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) }
