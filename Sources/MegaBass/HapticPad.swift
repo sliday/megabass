@@ -174,6 +174,8 @@ final class LayoutState: ObservableObject {
     var onChange: (() -> Void)?
     /// Hides every megabass window (the menu-bar icon stays).
     var hideAll: (() -> Void)?
+    /// The menu-bar popover opened (true) or closed (false).
+    var menuOpen: ((Bool) -> Void)?
 }
 
 /// The planet widget: just the planet and its ring, filling a borderless square window that

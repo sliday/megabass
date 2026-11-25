@@ -18,6 +18,8 @@ struct PopoverView: View {
     @ObservedObject var hub: NowPlayingHub
     @ObservedObject private var theme = ThemeAnimator.shared
     @ObservedObject private var layout = LayoutState.shared
+    /// The menu-bar copy: while it's open the floating widget steps aside (one planet at a time).
+    var inMenu = false
 
     private var paletteKey: String { hub.paletteKey }
     private var planetKey: String { hub.planetKey }
@@ -39,8 +41,8 @@ struct PopoverView: View {
         .onAppear { applyPalette() }
         .onChange(of: paletteKey) { _ in applyPalette() }
         .environment(\.colorScheme, .dark)
-        .onAppear { hub.startPolling() }
-        .onDisappear { hub.stopPolling() }
+        .onAppear { hub.startPolling(); if inMenu { LayoutState.shared.menuOpen?(true) } }
+        .onDisappear { hub.stopPolling(); if inMenu { LayoutState.shared.menuOpen?(false) } }
     }
 
     private var full: some View {

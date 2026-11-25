@@ -8,7 +8,7 @@ struct MegaBassApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverView(engine: delegate.engine, hub: delegate.hub)
+            PopoverView(engine: delegate.engine, hub: delegate.hub, inMenu: true)
         } label: {
             MenuBarIcon(engine: delegate.engine)
         }
@@ -51,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     h.seekToEndOfFile()
                     h.write((self.engine.diagnosticsLine() + "\n").data(using: .utf8)!)
                 }
+            }
+        }
+        // One planet at a time: the widget steps aside while the menu-bar popover is open.
+        LayoutState.shared.menuOpen = { [weak self] open in
+            DispatchQueue.main.async {
+                guard let self, LayoutState.shared.compact else { return }
+                if open { self.widget?.orderOut(nil) } else { self.widget?.orderFrontRegardless() }
             }
         }
         if args.contains("--gallery") {
