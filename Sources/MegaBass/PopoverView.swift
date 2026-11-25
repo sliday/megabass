@@ -118,16 +118,8 @@ struct PowerRing: View {
 
     var body: some View {
         ZStack {
-            // Meter ring.
-            ForEach(0..<ticks, id: \.self) { i in
-                let v = level(at: i)
-                Capsule()
-                    .fill(engine.enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.12)))
-                    .opacity(engine.enabled ? 0.45 + 0.55 * v : 1)
-                    .frame(width: 3, height: 6 + 16 * v)
-                    .offset(y: -(62 + 8 * v))
-                    .rotationEffect(.degrees(Double(i) / Double(ticks) * 360))
-            }
+            // vizamp's particle ridge, bent into a circle.
+            RingVisualizer(engine: engine)
             Button(action: { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } }) {
                 ZStack {
                     Circle()
