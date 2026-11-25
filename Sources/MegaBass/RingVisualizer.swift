@@ -559,6 +559,9 @@ struct RingVisualizer: View, Equatable {
         ctx.fill(wash, with: .color(Theme.hot.opacity(0.10)), style: FillStyle(eoFill: true))
 
         // Stalks: radial columns from the baseline to the ridge, swaying at band-dependent rates.
+        // Hot metal too: each takes its band's temperature, hottest where it meets the ridge.
+        var hotStalks = ctx
+        hotStalks.blendMode = .plusLighter
         for i in 0..<48 {
             let th = -Double.pi / 2 + Double(i) / 48 * 2 * .pi
             let lv = sim.level(at: th)
@@ -570,7 +573,16 @@ struct RingVisualizer: View, Equatable {
             var p = Path()
             p.move(to: pt(c, th, sim.base))
             p.addCurve(to: pt(c, th, tip), control1: pt(c, th + sway * 0.65, sim.base + rise * 0.35), control2: pt(c, th - sway, sim.base + rise * 0.75))
-            ctx.stroke(p, with: .color(Theme.hot.opacity(floorFade(lv) * 0.45)), lineWidth: 1.5)
+            let tmp = sim.temperature(at: th)
+            let a = max(floorFade(lv) * 0.35, min(0.9, tmp * 1.1))
+            let foot = pt(c, th, sim.base), head = pt(c, th, tip)
+            let heat = GraphicsContext.Shading.linearGradient(
+                Gradient(colors: [Self.blackbody(tmp * 0.45).opacity(a * 0.35), Self.blackbody(tmp).opacity(a)]),
+                startPoint: foot, endPoint: head)
+            if tmp > 0.45 {
+                hotStalks.stroke(p, with: .color(Self.blackbody(tmp).opacity(0.16 * min(1, tmp))), lineWidth: (1.2 + tmp * 2.2) * 3)
+            }
+            hotStalks.stroke(p, with: heat, lineWidth: 1.2 + tmp * 2.2)
         }
 
         // Pulses racing up the stalks: white-hot throbbing dots with a short tail.
