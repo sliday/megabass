@@ -16,20 +16,18 @@ final class PlanetSpin {
     private var last = 0.0
     private var intensity = SongIntensity()
 
-    // Beat tracking: tempo from kick intervals (folded into 60-180 BPM, median), and a beat clock
-    // phase-locked to kicks that land near a predicted beat, so it keeps time through weak kicks.
+    // Beat following: the tempo and grid come from the engine's TempoTracker.
     private(set) var bpm = 0.0
-    private var period = 0.5, beatPhase = 0.0, beatCount = 0
-    private var kickTimes: [Double] = []
-    /// Share of recent kicks off the beat grid (beats and half beats); high means the tempo is lost.
-    private var miss = 1.0
+    private var bangFrac = 0.0, beatFrac = 0.0, lastNodAt = 0.0
     /// Headbang body motion, applied to the whole planet system: sideways rock and a downward bob.
     private(set) var wobble = 0.0, bob = 0.0
     private var bobV = 0.0
 
     /// Advances the spin. `rate` is the planet's own base speed; `energy` the song's loudness;
-    /// `kick` the kick pulse; `headbang` whether Overdrive is on. Returns the angle to draw.
-    func advance(_ t: Double, on: Bool, rate: Double = 0.2, energy: Double = 0, kick: Double = 0, headbang: Bool = false) -> Double {
+    /// `kick` the kick pulse; `headbang` whether Overdrive is on; `beat` the tempo grid and `now`
+    /// the time in its base (`Clock`). Returns the angle to draw.
+    func advance(_ t: Double, on: Bool, rate: Double = 0.2, energy: Double = 0, kick: Double = 0, headbang: Bool = false,
+                 beat: TempoTracker.Beat = .init(), now: Double = 0) -> Double {
         let dt = last == 0 ? 0 : min(0.1, t - last)
         last = t
         if !on {
@@ -48,51 +46,39 @@ final class PlanetSpin {
         let target = rate * (0.4 + 2.6 * intensity.step(energy: energy, dt: dt))
         omega += (target - omega) * min(1, dt / 3)
         lon += omega * dt
-        // Tempo: intervals between kicks, folded into 60-180 BPM, median of the last 12.
-        let isKick = kick > lastKick + 0.35
-        lastKick = kick
-        if isKick {
-            kickTimes.append(t)
-            if kickTimes.count > 13 { kickTimes.removeFirst() }
-            let gaps = zip(kickTimes.dropFirst(), kickTimes).map { $0 - $1 }.map { g -> Double in
-                var x = g
-                while x < 0.333 { x *= 2 }
-                while x > 1.0 { x /= 2 }
-                return x
-            }
-            // Phase lock: pull the beat clock toward a kick near a predicted beat, and trim the
-            // period by the same error so the clock settles on the true tempo. Kicks on the
-            // half beat (syncopation) still count as on the grid.
-            let err = beatPhase - beatPhase.rounded()
-            let offGrid = min(abs(err), abs(0.5 - abs(err))) > 0.12
-            miss += ((offGrid ? 1 : 0) - miss) * 0.15
-            // The median retunes only while the grid is lost: syncopated gaps (1.5 beats) bias it.
-            if gaps.count >= 3, bpm == 0 || miss > 0.5 {
-                let med = gaps.sorted()[gaps.count / 2]
-                if bpm == 0 || abs(med - period) > period * 0.08 { period += (med - period) * 0.3 }
-            }
-            if abs(err) < 0.25 {
-                beatPhase -= err * 0.5
-                if bpm > 0 { period = min(1, max(0.333, period * (1 + err * 0.1))) }
-            }
-            if gaps.count >= 3 { bpm = 60 / period }
-        }
-        // Beat clock; on each beat the planet headbangs (Overdrive doubles it).
-        let before = beatPhase
-        beatPhase += dt / max(0.333, period)
+        // Tempo from the audio (TempoTracker): beats and half-time "bangs" in speaker time. The nod
+        // launches 0.12 s early so the spring's dip lands on the bang; the beats between get a
+        // small dip. Phases are watched for wrapping, with a refractory gap, because the tracker
+        // re-anchors its grid every half second.
         let loud = min(1, energy * 2.5)
-        if bpm > 0, floor(beatPhase) > floor(before), loud > 0.08 {
-            beatCount += 1
-            let hit = (0.9 + loud * 1.6) * (headbang ? 1.6 : 1)
-            nodV += hit
-            bobV += 22 * loud
+        let hasTempo = beat.bpm > 0 && beat.confidence > 0.03
+        bpm = hasTempo ? beat.bpm : 0
+        var sway = 0.0
+        if hasTempo {
+            let p = beat.period
+            let bang = ((now + 0.12 - beat.bangAt) / (2 * p)).truncatingRemainder(dividingBy: 1)
+            let bangF = bang < 0 ? bang + 1 : bang
+            let one = ((now + 0.06 - beat.beatAt) / p).truncatingRemainder(dividingBy: 1)
+            let beatF = one < 0 ? one + 1 : one
+            if bangF < bangFrac - 0.5, now - lastNodAt > 1.2 * p, loud > 0.08 {
+                nodV += (0.9 + loud * 1.6) * (headbang ? 1.6 : 1)
+                bobV += 22 * loud
+                lastNodAt = now
+            } else if beatF < beatFrac - 0.5, now - lastNodAt > 0.6 * p, loud > 0.08 {
+                bobV += 8 * loud
+            }
+            bangFrac = bangF; beatFrac = beatF
+            sway = sin(.pi * (now - beat.bangAt) / p)       // left on one beat, right on the next
+        } else if kick > lastKick + 0.35, loud > 0.08 {
+            nodV += (0.6 + loud) * (headbang ? 1.6 : 1)     // no tempo yet: nod on the kicks
         }
+        lastKick = kick
         nodV += (-70 * nod - 9 * nodV) * dt
         nod += nodV * dt
         // Bob: a quick dip on the beat, sprung back up. Rock: side to side across two beats.
         bobV += (-180 * bob - 16 * bobV) * dt
         bob += bobV * dt
-        let rock = bpm > 0 ? sin(.pi * beatPhase) * 0.06 * loud : 0
+        let rock = sway * 0.06 * loud
         wobble += (rock - wobble) * min(1, dt * 8)
         return lon
     }
@@ -260,7 +246,7 @@ struct PlanetView: View, Equatable {
         // Rotation reads as a sphere: features live in latitude/longitude, so they move fast across
         // the middle and bunch up at the limbs. The surface and the power icon share one spin.
         let spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin, energy: OrbitSim.shared.energy,
-                                             kick: kick, headbang: engine.overdrive > 0)
+                                             kick: kick, headbang: engine.overdrive > 0, beat: engine.tempo, now: Clock.now())
         // The surface leans with the planet's axial tilt.
         surface.translateBy(x: c.x, y: c.y); surface.rotate(by: .radians(st.tilt)); surface.translateBy(x: -c.x, y: -c.y)
 

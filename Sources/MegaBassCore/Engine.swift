@@ -43,6 +43,8 @@ public final class Engine: ObservableObject {
     private let tap = SystemTap()
     private let demo = DemoGroove()
     private let pipeline = Pipeline()
+    /// The song's tempo and beat grid (speaker time, `Clock`), for the visuals.
+    public var tempo: TempoTracker.Beat { pipeline.lastBeat }
     private var meterTimer: Timer?
     private var frameTick = 0
     private var askedPermission = false
@@ -263,6 +265,9 @@ final class Pipeline: @unchecked Sendable {
     private var spectrumAnalyzer: SpectrumAnalyzer?
     private var _spectrum: [Float] = []
     var lastSpectrum: [Float] { lock.withLock { _spectrum } }
+    private var tempoTracker: TempoTracker?
+    private var _beat = TempoTracker.Beat()
+    var lastBeat: TempoTracker.Beat { lock.withLock { _beat } }
     // Diagnostics, reset each read.
     private var diagSq = 0.0, diagN = 0, diagCycles = 0, diagTones = 0
     func takeDiag() -> (rmsDB: Double, cycles: Int, tones: Int) {
@@ -307,6 +312,10 @@ final class Pipeline: @unchecked Sendable {
         if let v { cycles!.process(samples, time: host + offset) { v.push($0); nCycles += 1 } }
         if spectrumAnalyzer == nil || spectrumAnalyzer!.sampleRate != sampleRate { spectrumAnalyzer = SpectrumAnalyzer(sampleRate: sampleRate) }
         spectrumAnalyzer!.process(samples) { bands in lock.withLock { _spectrum = bands } }
+        if tempoTracker == nil || tempoTracker!.sampleRate != sampleRate { tempoTracker = TempoTracker(sampleRate: sampleRate) }
+        tempoTracker!.process(samples, time: host + offset)
+        let beat = tempoTracker!.beat
+        lock.withLock { _beat = beat }
         if crossover > Self.split * 1.2 {
             if tones == nil || tones!.sampleRate != sampleRate { tones = ToneTracker(sampleRate: sampleRate) }
             tones!.setBand(low: max(low, Self.split), high: crossover)

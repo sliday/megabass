@@ -330,6 +330,40 @@ case "tones":
     print(pass ? "PASS" : "FAIL")
     exit(pass ? 0 : 1)
 
+case "tempo":
+    // Tempo tracker: the 100 BPM demo groove, read at other sample rates so it plays at 84-140 BPM.
+    // Bar: from 8 s on, tempo within ±0.5 BPM, beats within 30 ms of the true grid, and the
+    // half-time bang on the kick beats (1 and 3).
+    let audio = DemoGroove.render(seconds: 24, sampleRate: 48000)
+    var pass = true
+    for target in [84.0, 100, 120, 128, 140] {
+        let sr = 48000 * target / DemoGroove.bpm
+        let tr = TempoTracker(sampleRate: sr)
+        let spb = 60 / target
+        var worstBPM = 0.0, worstPhase = 0.0, bangOK = 0, checks = 0
+        var pos = 0
+        while pos < audio.count {
+            let end = min(pos + 512, audio.count)
+            audio[pos..<end].withUnsafeBufferPointer { tr.process($0, time: Double(pos) / sr) }
+            pos = end
+            let t = Double(pos) / sr
+            if t >= 8, Int(t * 4) != Int((t - 512 / sr) * 4) {          // four checks a second
+                let b = tr.beat
+                checks += 1
+                worstBPM = max(worstBPM, abs(b.bpm - target))
+                let k = (b.beatAt / spb).rounded()
+                worstPhase = max(worstPhase, abs(b.beatAt - k * spb))
+                if Int((b.bangAt / spb).rounded()) % 2 == 0 { bangOK += 1 }
+            }
+        }
+        let ok = worstBPM <= 0.5 && worstPhase <= 0.03 && bangOK == checks
+        pass = pass && ok
+        print(String(format: "%5.0f BPM: worst tempo error %.2f BPM, worst beat %.0f ms, bang on 1/3 in %d of %d  %@",
+                     target, worstBPM, worstPhase * 1000, bangOK, checks, ok ? "ok" : "MISS"))
+    }
+    print(pass ? "PASS" : "FAIL")
+    exit(pass ? 0 : 1)
+
 case "latency":
     print(AudioDevices.defaultOutputName(), String(format: "%.1f ms", AudioDevices.outputLatency() * 1000))
 

@@ -59,6 +59,9 @@ The build is ad-hoc signed, so macOS may ask for the permission again after a re
 - `ToneTracker`: every 10 ms, the strongest spectral peak in the upper band. It skips the bass
   overtones and requires 6× prominence plus a 40 ms steady hold.
 - `SpectrumAnalyzer`: 40 log bands, 20 Hz to 4 kHz, drawn as the Frequencies track.
+- `TempoTracker`: the song's tempo and beat grid for the planet's headbang. An onset envelope at
+  200 frames a second, autocorrelated over 8 s (60-160 BPM; faster songs read half time), with
+  the phase from a two-beat comb so the nod lands on beats 1 and 3.
 - `HapticVoice`: a high-priority thread that schedules actuations for when the speakers play
   that audio (capture time + device output latency).
 - `Motor`: the Force Touch actuator through the private MultitouchSupport framework.
@@ -72,6 +75,7 @@ The build is ad-hoc signed, so macOS may ask for the permission again after a re
 |---------|-----|-------------|
 | `mbcheck cycles` | sines within 1 %, bass stem ≥ 85 % on note, no dropouts | 0.01 %, 100 %, 100 % |
 | `mbcheck tones` | melody over groove ≥ 80 % on pitch, noise ≤ 5 % | 93 %, 0 % |
+| `mbcheck tempo` | demo groove played at 84-140 BPM: tempo ±0.5 BPM, beats within 30 ms, half-time bang on 1 and 3 | ≤0.29 BPM, ≤18 ms, 100 % |
 | `mbcheck pitch` | bass pitch class ≥ 90 %, kick recall ≥ 90 % within 30 ms | 92.8 %, 100 % at 20 ms |
 | `mbcheck e2e 6 bass` | speakers → tap → motor, periods start within ±40 ms of the sound | +13 ms |
 | `mbcheck live bass 20` | live log of whatever the Mac plays (the calling app needs the permission) | |
