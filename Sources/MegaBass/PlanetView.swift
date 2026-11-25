@@ -435,20 +435,34 @@ struct PlanetView: View {
         g.translateBy(x: c.x, y: c.y)
         g.rotate(by: .radians(planeTilt(style)))
         for m in moons(style, R: R) {
-            // Trail: the orbit the moon actually travelled (kick jumps included), fading over 0.9 s,
-            // each piece on the side of the planet it was on.
+            // Trail: the orbit the moon actually travelled (kick jumps included), drawn as continuous
+            // lines, never dots. Points are filled in every 0.03 rad so fast moons follow the orbit's
+            // curve; each side of the planet is one connected path; three layered strokes taper it.
             if on, m.trail.count > 1 {
+                var pts: [(p: CGPoint, ageFrac: Double, side: Bool)] = []
                 for i in 1..<m.trail.count {
                     let a = m.trail[i - 1], b = m.trail[i]
-                    guard (sin(b.angle) >= 0) == front else { continue }
-                    let age = orbit.time - b.t
-                    guard age < 0.9 else { continue }
-                    var seg = Path()
-                    // The kick moon's trail keeps its recorded radius (kick jumps); shepherds ride their ring edge.
                     let ra = m.springy ? a.radius : m.radius, rb = m.springy ? b.radius : m.radius
-                    seg.move(to: CGPoint(x: cos(a.angle) * ra, y: sin(a.angle) * ra * 0.24))
-                    seg.addLine(to: CGPoint(x: cos(b.angle) * rb, y: sin(b.angle) * rb * 0.24))
-                    g.stroke(seg, with: .color(mix(color, .white, orbit.speed * 0.5).opacity(min(1, (0.45 + orbit.speed * 0.5) * (1 - age / 0.9)))), style: StrokeStyle(lineWidth: m.size * 0.7 * (1 - age / 0.9) + 0.3, lineCap: .round))
+                    let steps = max(1, Int(abs(b.angle - a.angle) / 0.03))
+                    for k in 0..<steps {
+                        let f = Double(k) / Double(steps)
+                        let ang = a.angle + (b.angle - a.angle) * f, rad = ra + (rb - ra) * f
+                        let age = orbit.time - (a.t + (b.t - a.t) * f)
+                        guard age < 0.9 else { continue }
+                        pts.append((CGPoint(x: cos(ang) * rad, y: sin(ang) * rad * 0.24), age / 0.9, sin(ang) >= 0))
+                    }
+                }
+                let tint = mix(color, .white, orbit.speed * 0.5)
+                let strength = 0.45 + orbit.speed * 0.5
+                for layer in [(cut: 1.0, w: 0.35, a: 0.35), (cut: 0.66, w: 0.7, a: 0.6), (cut: 0.33, w: 1.0, a: 1.0)] {
+                    var path = Path(); var open = false
+                    for q in pts {
+                        if q.side == front && q.ageFrac <= layer.cut {
+                            if open { path.addLine(to: q.p) } else { path.move(to: q.p); open = true }
+                        } else { open = false }
+                    }
+                    g.stroke(path, with: .color(tint.opacity(min(1, strength * layer.a))),
+                             style: StrokeStyle(lineWidth: m.size * 0.75 * layer.w + 0.3, lineCap: .round, lineJoin: .round))
                 }
             }
             guard (sin(m.angle) >= 0) == front else { continue }
