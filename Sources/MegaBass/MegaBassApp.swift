@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if args.contains("--gallery") {
+            PlanetTextures.shared.capacity = 32                     // every type at once
             // Every planet type, lit, for review.
             let grid = VStack(spacing: 8) {
                 ForEach(0..<((PlanetStyle.Kind.allCases.count + 3) / 4), id: \.self) { row in

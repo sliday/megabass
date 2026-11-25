@@ -104,7 +104,7 @@ final class PlanetTexture: @unchecked Sendable {
         var glow = [RGB](repeating: .zero, count: W * H)
         var height = [Float](repeating: 0, count: W * H)
         var spec = [Float](repeating: 0, count: W * H)
-        let hasGlow = [PlanetStyle.Kind.inferno, .radiated, .star, .terran, .jungle, .ocean, .crystal, .mana, .disco, .eyeball, .plasma].contains(st.kind)
+        let hasGlow = [PlanetStyle.Kind.inferno, .radiated, .star, .terran, .jungle, .ocean, .crystal, .mana, .disco, .eyeball, .plasma, .fireEye].contains(st.kind)
         let starTint: RGB = [hexF(0xFF5A3A), hexF(0xFF9A3A), hexF(0xFFD86A), hexF(0xFFF4D6), hexF(0xBFD8FF)][st.starClass]
         func hex(_ v: UInt32) -> RGB { RGB(Float(v >> 16 & 0xFF) / 255, Float(v >> 8 & 0xFF) / 255, Float(v & 0xFF) / 255) }
         func mix(_ a: RGB, _ b: RGB, _ t: Float) -> RGB { a + (b - a) * max(0, min(1, t)) }
@@ -122,7 +122,7 @@ final class PlanetTexture: @unchecked Sendable {
         var lr = PlanetStyle.SplitMix64(state: PlanetStyle.fnv1a(st.key + "layer"))
         let layerPick = lr.unit()
         let layer: Int = switch st.kind {
-        case .star, .crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury: 0
+        case .star, .crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury, .fireEye: 0
         case .gasGiant: layerPick < 0.4 ? 0 : (layerPick < 0.7 ? 3 : 4)
         default: layerPick < 0.2 ? 0 : 1 + Int(min(4.999, (layerPick - 0.2) / 0.8 * 5))
         }
@@ -268,6 +268,16 @@ final class PlanetTexture: @unchecked Sendable {
                 case .mercury:
                     // Liquid metal: the look comes from reflections in the render.
                     col = hex(0x9AA0A8); relief = 0.5; shine = 1
+                case .fireEye:
+                    // A burning iris: flame streaks drawn in toward the front (where the slit is, see the
+                    // render), brightest there, smouldering to deep red at the back.
+                    let d = acos(max(-1, min(1, p.x))), phi = atan2(p.z, p.y)
+                    let streak = fbm(perm, SIMD3(cos(phi) * 3, sin(phi) * 3, d * 4), octaves: 4, freq: 2)
+                    let f = fbm(perm, q * 2 + warp * 2, octaves: 5, freq: 2.5) * 0.5 + streak * 0.5
+                    let front = max(0, 1 - d / 2.2)
+                    col = mix(hex(0x2A0500), hex(0xB8320A), f)
+                    emit = mix(hex(0xFF3A0A), hex(0xFFD27A), smooth(0.45, 0.85, f + front * 0.35)) * (0.35 + 1.1 * front)
+                    relief = 0.5 + (f - 0.5) * 0.15; shine = 0.2
                 case .plasma:
                     // Dark glass; the filaments are drawn live over it.
                     col = hex(0x07070D) + heat * 0.05
@@ -405,12 +415,15 @@ final class PlanetTextures {
         return tex
     }
 
+    /// Textures kept (the app shows one or two planets; the gallery shows them all).
+    var capacity = 6
+
     private func store(_ tex: PlanetTexture, key: String, planet: String) {
         cache[key] = tex
         latest[planet] = tex
         order.removeAll { $0 == key }
         order.append(key)
-        while order.count > 6 { cache.removeValue(forKey: order.removeFirst()) }    // ~13 MB each; oldest first, never all
+        while order.count > capacity { cache.removeValue(forKey: order.removeFirst()) }    // ~13 MB each; oldest first, never all
     }
 
     /// Renders the disc (2x resolution) into an image: texture lookup, clouds, per-pixel light, glow.
@@ -419,7 +432,7 @@ final class PlanetTextures {
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
                 flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
                 sun: Float = 1, iconColor: Color = .white, blur: Float = 0, pitch: Double = 0,
-                liquid: Float = 2, time: Double = 0, wobble: Float = 0, pixelScale: Double = 1) -> CGImage? {
+                liquid: Float = 2, time: Double = 0, wobble: Float = 0, pixelScale: Double = 1, liquidSlope: Float = 0) -> CGImage? {
         // Diameter at 2x, scaled down when the planet is shown smaller (the widget): no unseen pixels.
         let n = max(64, Int(R * 4 * min(1, pixelScale)))
         let q = (pitch / 0.004).rounded()                    // the map rebuilds only while the nod moves
@@ -435,7 +448,7 @@ final class PlanetTextures {
         let rimTint = Self.rgb(rimColor)
         let star = tex.kind == .star
         let mana = tex.kind == .mana, tt = Float(time.truncatingRemainder(dividingBy: 1000))
-        let eye = tex.kind == .eyeball, mercury = tex.kind == .mercury
+        let eye = tex.kind == .eyeball, mercury = tex.kind == .mercury, fire = tex.kind == .fireEye
         func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = max(0, min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
         // Flares as point lights just beyond the limb, a little toward the viewer (unit-sphere space).
         let flareTint = Self.rgb(flareColor)
@@ -515,6 +528,7 @@ final class PlanetTextures {
                 let glum = simd_dot(emitted, SIMD3<Float>(0.299, 0.587, 0.114))
                 emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
             }
+            if fire { emitted *= 0.8 + 0.3 * sin(tt * 7 + tex.height[row + u] * 40) }   // the fire flickers in patches
             out += emitted
             if mercury {
                 // Liquid metal: the view reflected off a rippling surface (ripples swell with the bass).
@@ -533,22 +547,33 @@ final class PlanetTextures {
                 out = env * SIMD3<Float>(0.86, 0.89, 0.93) * (0.85 + 0.3 * pow(1 - n2.z, 2))
             }
             if mana {
-                // The orb is filled to `liquid` (screen y, down positive) with a rippling surface; above
-                // it, empty dark glass with a rim; a bright meniscus where they meet.
-                let wave = liquid + 0.035 * sin(nrm.x * 7 + tt * 2.4) + 0.02 * sin(nrm.x * 13 - tt * 3.7)
-                if nrm.y < wave - 0.02 {
+                // Liquid in a glass ball, traced along this pixel's view ray. The surface is a plane at
+                // `liquid` (screen y, down positive), tilted by `liquidSlope` (sloshing), with ripples,
+                // and seen slightly from above (vz), so its top shows as an ellipse. The ray meets either
+                // the liquid against the front glass, the top surface, or nothing (empty glass).
+                let x = nrm.x, y = nrm.y, zf = nrm.z, vz: Float = 0.32
+                let lx = liquid + liquidSlope * x + 0.03 * sin(x * 7 + tt * 2.4) + 0.018 * sin(x * 13 - tt * 3.7)
+                let front = lx + vz * zf, back = lx - vz * zf
+                if y >= front {
+                    out *= 0.8 + 0.2 * min(1, (y - front) * 5)                              // liquid behind the front glass
+                } else if y >= back {
+                    let zHit = (y - lx) / vz                                                // where the ray meets the surface
+                    let ring = 0.5 + 0.5 * sin(hypot(x, zHit) * 22 - tt * 4)              // ripples spreading out
+                    out = out * (1.15 + 0.3 * ring) + rimTint * 0.15 + SIMD3<Float>(repeating: 0.12) * max(0, -zHit)
+                } else {
                     out = SIMD3<Float>(0.025, 0.03, 0.045) + rimTint * (pow(1 - nrm.z, 2.5) * 0.35) + out * 0.06
-                } else if nrm.y < wave + 0.02 {
-                    out += (rimTint * 0.6 + SIMD3<Float>(repeating: 0.4)) * (1 - abs(nrm.y - wave) / 0.02)
                 }
+                // Meniscus: where the surface meets the glass, at the front and around the back.
+                let edge = min(abs(y - front), abs(y - back))
+                if edge < 0.018 && y > back - 0.018 { out += (rimTint * 0.6 + SIMD3<Float>(repeating: 0.4)) * (1 - edge / 0.018) }
             }
             // Off: the planet goes grey; the power icon is drawn after, so its LED stays lit.
             if !on {
                 let g = (out.x + out.y + out.z) / 3 * 0.45
                 out = SIMD3(repeating: g)
             }
-            if icon {
-                // Longitude on the texture, relative to the decal, wrapped to -pi...pi.
+            if icon || eye || fire {
+                // Longitude on the texture, relative to the decal (also the eyes' iris and slit), wrapped to -pi...pi.
                 var dl = (lonBase[i] + shift) / Float(W) * 2 * .pi
                 dl = dl - (2 * .pi) * floor((dl + .pi) / (2 * .pi))
                 let lat = latF[i]
@@ -556,6 +581,13 @@ final class PlanetTextures {
                     let ex = dl * cosLat[i], ny2 = lat
                     let gx = ex * tiltC + ny2 * tiltS, gy = -ex * tiltS + ny2 * tiltC     // upright on screen
                     let gu = gx / (2 * iconHalf) + 0.5, gv = 0.5 - gy / (2 * iconHalf)
+                    if fire {
+                        // The slit pupil, widening with the music, with a white-hot rim.
+                        let sw = (0.035 + 0.05 * wobble) * sqrt(max(0, 1 - (gy / 0.42) * (gy / 0.42)))
+                        let slit = smooth(sw + 0.015, sw, abs(gx))
+                        let rimGlow = smooth(sw + 0.07, sw + 0.015, abs(gx)) * (1 - slit) * smooth(0.45, 0.3, abs(gy))
+                        out = out * (1 - slit * 0.95) + SIMD3<Float>(1, 0.78, 0.4) * rimGlow * 0.9
+                    }
                     if eye {
                         // Caustic: the cornea focuses light onto the iris on the side away from the highlight.
                         let rr = hypot(gx, gy)
@@ -566,6 +598,7 @@ final class PlanetTextures {
                     // An LED: a thin dark rim just outside the glyph so it reads on any ground, then the
                     // glyph screen-blended (it only adds light). On: bright, with a halo. Off: a dim
                     // standby glow in the palette colour.
+                    if icon {
                     let a = glyphAt(gu, gv)
                     let wide = glyphAt((gu - 0.5) * 0.86 + 0.5, (gv - 0.5) * 0.86 + 0.5)
                     out *= 1 - max(0, wide - a) * 0.6
@@ -578,6 +611,7 @@ final class PlanetTextures {
                     } else if a > 0.01 {
                         let led = simd_min(iconLight * 0.6 + 0.1, one)
                         out = one - (one - out) * (one - led * a)
+                    }
                     }
                 }
             }

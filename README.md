@@ -16,7 +16,7 @@ Click the planet to switch the trackpad on. It pulses with the bass and the trac
 
 | Control | What it does |
 |---------|--------------|
-| **Planet** | On and off. Hover it to turn the power icon toward you. |
+| **Planet** | On and off: in colour and moving when on, grey and still when off. |
 | **Range** | The live spectrum of what your Mac plays, 20 Hz to 4 kHz. Drag the handles, or draw across the bars, to pick what the trackpad plays: Deep (bass), Voices, Melody. Bass replays the music's own waveform, one motor period per bass period; above 160 Hz, notes that stand out from the mix ride along. |
 | **Strength** | How hard the motor works. |
 | **Overdrive** | Kicks hit harder, with extra rumble, and the planet headbangs harder. |
@@ -30,7 +30,7 @@ Click the planet to switch the trackpad on. It pulses with the bass and the trac
 The power button is a small procedural world, hashed from the station (or the Spotify/Music song):
 12 types (gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno,
 star), and about one in four songs gets a curio instead: crystal ball, 8 ball, mana orb (filled to
-the song's loudness), disco ball, eyeball (it looks at your pointer), plasma globe, pearl or mercury ball; fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
+the song's loudness), disco ball (beams through a haze), eyeball (it looks at your pointer), plasma globe, pearl, mercury ball or fire eye; fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
 react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
 and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
 Prominent voices (a sung or lead note) launch new satellites off its face on tiny rockets (the spent

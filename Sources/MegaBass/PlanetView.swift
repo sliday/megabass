@@ -320,6 +320,34 @@ struct PlanetView: View, Equatable {
             }
         }
 
+        // Fire eye: a crown of flame tongues licking off the limb, leaping higher with the bass.
+        if st.kind == .fireEye {
+            let fire = fadedGlow(ctx, size: size)
+            let e = on ? min(1, OrbitSim.shared.energy * 2.2) : 0.1
+            let warmth = Gradient(stops: [.init(color: Color(red: 1, green: 0.85, blue: 0.5).opacity(on ? 0.7 : 0.25), location: 0),
+                                          .init(color: Color(red: 1, green: 0.4, blue: 0.08).opacity(on ? 0.45 : 0.15), location: 0.45),
+                                          .init(color: Color(red: 0.6, green: 0.08, blue: 0.02).opacity(0), location: 1)])
+            let halo = R * 1.5
+            fire.fill(Path(ellipseIn: CGRect(x: c.x - halo, y: c.y - halo, width: halo * 2, height: halo * 2)),
+                      with: .radialGradient(warmth, center: c, startRadius: R * 0.9, endRadius: halo))
+            let n = 26
+            for k in 0..<n {
+                let a = Double(k) / Double(n) * 2 * .pi + 0.04 * sin(t * 3 + Double(k))
+                let flick = 0.5 + 0.5 * sin(t * (4 + Double(k % 5)) + Double(k) * 1.7)
+                let len = R * (0.18 + 0.3 * flick) * (0.6 + 0.8 * e + 0.4 * kick)
+                let w = 0.11 + 0.03 * sin(Double(k) * 2.3)
+                let sway = 0.12 * sin(t * 5 + Double(k) * 0.9)
+                var tongue = Path()
+                tongue.move(to: CGPoint(x: c.x + cos(a - w) * R * 0.96, y: c.y + sin(a - w) * R * 0.96))
+                tongue.addQuadCurve(to: CGPoint(x: c.x + cos(a + sway) * (R + len), y: c.y + sin(a + sway) * (R + len)),
+                                    control: CGPoint(x: c.x + cos(a - w * 0.3) * (R + len * 0.6), y: c.y + sin(a - w * 0.3) * (R + len * 0.6)))
+                tongue.addQuadCurve(to: CGPoint(x: c.x + cos(a + w) * R * 0.96, y: c.y + sin(a + w) * R * 0.96),
+                                    control: CGPoint(x: c.x + cos(a + w * 0.3) * (R + len * 0.6), y: c.y + sin(a + w * 0.3) * (R + len * 0.6)))
+                tongue.closeSubpath()
+                fire.fill(tongue, with: .radialGradient(warmth, center: c, startRadius: R * 0.92, endRadius: R + len))
+            }
+        }
+
         // Thin atmosphere: a tight bright shell on the limb plus two faint outer layers.
         if on && st.kind != .star {
             let r2 = R * 1.1
@@ -346,7 +374,8 @@ struct PlanetView: View, Equatable {
         var spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin, energy: OrbitSim.shared.energy,
                                              kick: kick, headbang: engine.overdrive > 0, beat: engine.tempo, now: Clock.now())
         // The eyeball does not spin: it looks (at the pointer, or around).
-        let eye = st.kind == .eyeball
+        if st.kind == .mana { ManaSlosh.shared.step(t: t, kick: kick, sway: PlanetSpin.shared.wobble) }
+        let eye = st.kind == .eyeball || st.kind == .fireEye
         if eye { EyeLook.shared.advance(t: t); spin = EyeLook.shared.lon }
         // The surface leans with the planet's axial tilt.
         surface.translateBy(x: c.x, y: c.y); surface.rotate(by: .radians(st.tilt)); surface.translateBy(x: -c.x, y: -c.y)
@@ -360,12 +389,13 @@ struct PlanetView: View, Equatable {
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
                                                   rim: heat, grade: st.kind == .star || st.kind.isCurio || !on ? nil : (hot, heat),
                                                   flares: on ? RingSim.shared.planetLights() + impactLights(st) : [], flareColor: mix(heat, .white, 0.35),
-                                                  icon: true, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),
+                                                  icon: false, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),     // on/off reads from colour and motion
                                                   blur: eye ? 0 : Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch + (eye ? EyeLook.shared.pitch : 0),
                                                   liquid: Float(0.45 - 1.2 * min(1, OrbitSim.shared.energy * 2.2) * (on ? 1 : 0.3)),   // quiet: a quarter full; loud: ~90 %
                                                   time: OrbitSim.shared.time,
                                                   wobble: Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick),
-                                                  pixelScale: pixelScale) {
+                                                  pixelScale: pixelScale,
+                                                  liquidSlope: Float(ManaSlosh.shared.tilt - PlanetSpin.shared.wobble)) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -604,6 +634,7 @@ struct PlanetView: View, Equatable {
         case .plasma:   return (h(0x0A0A14), h(0x14142A), h(0x2A2A50), .white, h(0xC88CFF))
         case .pearl:    return (h(0xF1EAE0), h(0xE4DCD2), h(0xD8E4F0), .white, nil)
         case .mercury:  return (h(0x9AA0A8), h(0x6A7078), h(0xC8CED6), .white, nil)
+        case .fireEye:  return (h(0x3A0A02), h(0xB8320A), h(0xFF7A1A), h(0xFFD27A), h(0xFF5A0A))
         }
     }
 
@@ -884,6 +915,24 @@ extension EnvironmentValues {
     var planetEdge: PlanetEdge {
         get { self[PlanetEdgeKey.self] }
         set { self[PlanetEdgeKey.self] = newValue }
+    }
+}
+
+/// The mana orb's liquid: its surface tilts on a lightly damped spring. Kicks knock it from side to
+/// side; when the ball sways (headbang), the liquid lags behind and sloshes back.
+@MainActor
+final class ManaSlosh {
+    static let shared = ManaSlosh()
+    private(set) var tilt = 0.0
+    private var vel = 0.0, lastKick = 0.0, last = 0.0, side = 1.0
+
+    func step(t: Double, kick: Double, sway: Double) {
+        let dt = last == 0 ? 0 : min(0.1, t - last)
+        last = t
+        if kick > lastKick + 0.35 { vel += side * (0.6 + 0.8 * kick); side = -side }
+        lastKick = kick
+        vel += ((-sway * 4 - tilt) * 28 - vel * 2.2) * dt
+        tilt = max(-0.6, min(0.6, tilt + vel * dt))
     }
 }
 

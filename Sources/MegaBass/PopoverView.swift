@@ -222,6 +222,10 @@ struct PowerRing: View {
             }
             .buttonStyle(.plain)
             .allowsHitTesting(!draggable)
+            // No power icon: off is grey and still, on is colour and motion. The cursor says it's a button.
+            .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+            .help(engine.enabled ? "Turn trackpad haptics off" : "Turn trackpad haptics on")
+            .accessibilityLabel(engine.enabled ? "Turn trackpad haptics off" : "Turn trackpad haptics on")
             .overlay {
                 if draggable {
                     // Moving more than 3 pt drags the window; releasing without moving is a click.

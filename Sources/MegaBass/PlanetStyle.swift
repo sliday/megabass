@@ -13,9 +13,9 @@ struct PlanetStyle: Equatable {
     enum Kind: String, CaseIterable {
         case gasGiant = "gas giant", terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno, star
         case crystal = "crystal ball", eightBall = "8 ball", mana = "mana orb", disco = "disco ball", eyeball, plasma = "plasma globe", pearl
-        case mercury = "mercury ball"
+        case mercury = "mercury ball", fireEye = "fire eye"
         static let worlds: [Kind] = [.gasGiant, .terran, .ocean, .jungle, .desert, .tundra, .ice, .barren, .radiated, .toxic, .inferno, .star]
-        static let curios: [Kind] = [.crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury]
+        static let curios: [Kind] = [.crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury, .fireEye]
         var isCurio: Bool { Kind.curios.contains(self) }
     }
 
@@ -99,7 +99,7 @@ struct PlanetStyle: Equatable {
         case .toxic:    clouds = blobs(20, 0.15, 0.4); atmosphere *= 1.6
         case .inferno:  craters = blobs(6, 0.05, 0.12); cracks = (0..<9).map { _ in crack(&r) }; atmosphere *= 0.8
         case .star:     atmosphere = 1.6
-        case .mana:     atmosphere = 0.6
+        case .mana, .fireEye: atmosphere = 0.6
         case .plasma:   atmosphere = 0.5
         case .crystal, .eightBall, .disco, .eyeball, .pearl, .mercury: atmosphere = 0.25
         }
