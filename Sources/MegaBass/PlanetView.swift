@@ -502,7 +502,7 @@ struct PlanetView: View, Equatable {
     private var ringOpen: Double { PlanetSpin.shared.ringOpen }
 
     /// The moons on this planet: kick moon always, shepherds on ringed planets.
-    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false; var lift = 0.0 }
+    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false; var lift = 0.0; var rocket = false }
     private func moons(_ st: PlanetStyle, R: Double) -> [Moon] {
         let o = OrbitSim.shared
         var out = [Moon(angle: o.moonAngle, radius: R * 1.72 + o.spring, size: 3.2, glow: 0.5 + o.flash, trail: o.moonTrail, springy: true)]
@@ -511,7 +511,8 @@ struct PlanetView: View, Equatable {
             out.append(Moon(angle: o.outerAngle, radius: R * (1.18 + st.ringWidth), size: 1.6, glow: 0.3 + o.groups[5], trail: o.outerTrail))
         }
         for v in o.voiceMoons {
-            out.append(Moon(angle: v.angle, radius: v.r, size: v.size, glow: v.falling ? 0.9 : 0.4, trail: v.trail, springy: true, lift: v.lift))
+            out.append(Moon(angle: v.angle, radius: v.r, size: v.size, glow: v.falling ? 0.9 : 0.4, trail: v.trail, springy: true, lift: v.lift,
+                            rocket: !v.inserted && !v.falling))
         }
         return out
     }
@@ -607,6 +608,20 @@ struct PlanetView: View, Equatable {
             }
             guard (sin(m.angle) >= 0) == front else { continue }
             let p = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * ringOpen)
+            if m.rocket, on, m.trail.count > 1 {
+                // The rocket's flame, pointing back along its climb, flickering.
+                let b = m.trail[m.trail.count - 2]
+                let q = CGPoint(x: cos(b.angle) * b.radius, y: sin(b.angle) * b.radius * ringOpen)
+                let len = max(0.001, hypot(p.x - q.x, p.y - q.y))
+                let fl = 8 + 6 * Double.random(in: 0...1)
+                let tip = CGPoint(x: p.x - (p.x - q.x) / len * fl, y: p.y - (p.y - q.y) / len * fl)
+                var flame = Path(); flame.move(to: tip); flame.addLine(to: p)
+                var fire = g
+                fire.blendMode = .plusLighter
+                fire.stroke(flame, with: .linearGradient(Gradient(colors: [Color(red: 1, green: 0.4, blue: 0.1).opacity(0), Color(red: 1, green: 0.85, blue: 0.5)]),
+                                                         startPoint: tip, endPoint: p),
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            }
             // Faster moons shine brighter: whiter core, bigger, stronger halo.
             let fast = on ? orbit.speed : 0
             let glow = on ? m.glow + fast * 0.9 : 0.15
@@ -646,8 +661,13 @@ struct PlanetView: View, Equatable {
                 let f = max(0, 1 - (orbit.time - d.born) / d.life)
                 let head = CGPoint(x: d.x, y: d.y), tail = CGPoint(x: d.x - d.vx * 0.04, y: d.y - d.vy * 0.04)
                 var p = Path(); p.move(to: tail); p.addLine(to: head)
-                sparks.stroke(p, with: .linearGradient(Gradient(colors: [color.opacity(0), mix(color, .white, 0.3 + 0.7 * f).opacity(f)]),
-                                                       startPoint: tail, endPoint: head),
+                let hot: Color
+                switch d.kind {
+                case .blast: hot = mix(color, .white, 0.3 + 0.7 * f).opacity(f)
+                case .exhaust: hot = Color(red: 1, green: 0.55 + 0.4 * f, blue: 0.2 + 0.5 * f).opacity(f)
+                case .stage: hot = Color(white: 0.75).opacity(0.7)
+                }
+                sparks.stroke(p, with: .linearGradient(Gradient(colors: [hot.opacity(0), hot]), startPoint: tail, endPoint: head),
                               style: StrokeStyle(lineWidth: d.size, lineCap: .round))
             }
         }
@@ -766,14 +786,38 @@ final class OrbitSim {
     struct VoiceMoon {
         var angle: Double, r: Double, vr = 0.0, target: Double, size: Double, lift: Double
         var born: Double, life: Double, falling = false, trail: [Sample] = []
+        var inserted = false
     }
     /// At most 10 in orbit; the oldest falls to make room.
     private(set) var voiceMoons: [VoiceMoon] = []
     /// Where satellites hit (angle on the orbital plane), for the flash and the surface light.
     private(set) var impacts: [(at: Double, angle: Double, power: Double)] = []
-    /// Debris thrown up by an impact (orbital-plane screen space around the planet centre).
-    struct Debris { var x: Double, y: Double, vx: Double, vy: Double, born: Double, life: Double, size: Double }
+    /// Debris in orbital-plane screen space around the planet centre. Each piece rises from a
+    /// point on the surface along `d` (outward) to height `h` under gravity `g` and lands when h < 0;
+    /// `o` drifts sideways at `l`. Kinds: blast sparks, rocket exhaust (weightless), spent stages.
+    struct Debris {
+        enum Kind { case blast, exhaust, stage }
+        var bx: Double, by: Double, dx: Double, dy: Double, h: Double, vh: Double, g: Double
+        var ox = 0.0, oy = 0.0, lx: Double, ly: Double, born: Double, life: Double, size: Double, kind: Kind
+        var x: Double { bx + dx * h + ox }
+        var y: Double { by + dy * h + oy }
+        var vx: Double { dx * vh + lx }
+        var vy: Double { dy * vh + ly }
+    }
     private(set) var debris: [Debris] = []
+
+    /// A burst of blast sparks from a surface point.
+    private func sparks(at px: Double, _ py: Double, count: Int, speed: ClosedRange<Double>, t: Double) {
+        let d = hypot(px, py)
+        var ox = d > 1 ? px / d : 0, oy = d > 1 ? py / d : -1
+        oy -= 0.7                                                    // a little upward on screen
+        let n = max(0.01, hypot(ox, oy)); ox /= n; oy /= n
+        for _ in 0..<count {
+            let side = Double.random(in: -50...50)
+            debris.append(Debris(bx: px, by: py, dx: ox, dy: oy, h: 0, vh: Double.random(in: speed), g: 300,
+                                 lx: -oy * side, ly: ox * side, born: t, life: 1.6, size: Double.random(in: 0.8...1.8), kind: .blast))
+        }
+    }
     private var pendingVoices: [VoiceSpotter.Event] = []
 
     func addVoices(_ events: [VoiceSpotter.Event]) { pendingVoices += events }
@@ -795,13 +839,44 @@ final class OrbitSim {
         for k in voiceMoons.indices {
             var m = voiceMoons[k]
             if !on || t - m.born > m.life { m.falling = true }
+            let open = PlanetSpin.shared.ringOpen
+            let before = (x: cos(m.angle) * m.r, y: sin(m.angle) * m.r * open)
+            var climb = 1.0
             if m.falling {
                 m.vr -= R * 1.2 * dt                                    // the orbit decays ever faster
                 m.r += m.vr * dt
+            } else if !m.inserted {
+                // A tiny rocket: slow off the pad, faster, then curving into orbit as it gains speed.
+                let u = min(1, (t - m.born) / 1.3)
+                m.r = R + (m.target - R) * u * u * (3 - 2 * u)
+                climb = 0.25 + 0.75 * u
+                if u >= 1 {
+                    m.inserted = true
+                    // The spent stage drops away and falls back onto the planet.
+                    let mx = cos(m.angle) * m.r, my = sin(m.angle) * m.r * open
+                    let sx = cos(m.angle) * R, sy = sin(m.angle) * R * open
+                    let hd = max(0.5, hypot(mx - sx, my - sy))
+                    for _ in 0..<2 {
+                        debris.append(Debris(bx: sx, by: sy, dx: (mx - sx) / hd, dy: (my - sy) / hd, h: hd, vh: Double.random(in: -5...15), g: 140,
+                                             lx: Double.random(in: -12...12), ly: Double.random(in: -12...12), born: t, life: 4,
+                                             size: Double.random(in: 1.2...1.8), kind: .stage))
+                    }
+                }
             } else {
                 m.r += (m.target - m.r) * min(1, dt * 2.5)
             }
-            m.angle += dt * min(7, pace * pow(R * 1.72 / max(R, m.r), 1.5))     // Kepler: low runs fast
+            m.angle += dt * climb * min(7, pace * pow(R * 1.72 / max(R, m.r), 1.5))     // Kepler: low runs fast
+            if !m.inserted && !m.falling {
+                // Exhaust: sparks shed behind the rocket.
+                let now = (x: cos(m.angle) * m.r, y: sin(m.angle) * m.r * open)
+                let mvx = now.x - before.x, mvy = now.y - before.y, mv = max(0.001, hypot(mvx, mvy))
+                for _ in 0..<3 {
+                    let back = Double.random(in: 20...55), j = Double.random(in: -12...12)
+                    debris.append(Debris(bx: now.x, by: now.y, dx: 0, dy: 0, h: 0, vh: 0, g: 0,
+                                         lx: -mvx / mv * back - mvy / mv * j, ly: -mvy / mv * back + mvx / mv * j,
+                                         born: t, life: Double.random(in: 0.25...0.45), size: Double.random(in: 0.7...1.3), kind: .exhaust))
+                }
+            }
             m.trail.append(Sample(angle: m.angle, radius: m.r, t: t))
             m.trail.removeAll { t - $0.t > 0.9 }
             voiceMoons[k] = m
@@ -811,31 +886,28 @@ final class OrbitSim {
             if sin(voiceMoons[k].angle) > 0.15 {
                 let a = voiceMoons[k].angle, power = min(1, 0.5 + voiceMoons[k].size / 5)
                 impacts.append((t, a, power))
-                // The blast: sparks spray from the strike, mostly outward and up, and fall back.
+                // The blast: sparks spray from the strike and fall back onto the surface.
                 let open = PlanetSpin.shared.ringOpen
-                let px = cos(a) * R * 0.97, py = sin(a) * R * 0.97 * open
-                let d = max(1, hypot(px, py)), ox = px / d, oy = py / d
-                for _ in 0..<(18 + Int(14 * power)) {
-                    let spread = Double.random(in: -1.2...1.2), speed = Double.random(in: 40...130) * (0.6 + 0.4 * power)
-                    let dx = ox * cos(spread) - oy * sin(spread), dy = ox * sin(spread) + oy * cos(spread)
-                    debris.append(Debris(x: px, y: py, vx: dx * speed, vy: dy * speed - Double.random(in: 10...50),
-                                         born: t, life: Double.random(in: 0.6...1.2), size: Double.random(in: 0.8...1.8)))
-                }
+                sparks(at: cos(a) * R * 0.97, sin(a) * R * 0.97 * open, count: 18 + Int(14 * power),
+                       speed: (40 * (0.6 + 0.4 * power))...(130 * (0.6 + 0.4 * power)), t: t)
                 voiceMoons.remove(at: k)
             } else {
                 voiceMoons[k].r = R; voiceMoons[k].vr = 0
             }
         }
         impacts.removeAll { t - $0.at > 0.8 }
-        // Debris: pulled back toward the planet, with a little drag.
+        // Debris: up and back down onto the surface; a spent stage lands with a little burst.
+        var landed: [(Double, Double)] = []
         for k in debris.indices {
             var p = debris[k]
-            let r = max(R * 0.5, hypot(p.x, p.y))
-            p.vx += (-p.x / r * 170 - p.vx * 0.8) * dt
-            p.vy += (-p.y / r * 170 - p.vy * 0.8) * dt
-            p.x += p.vx * dt; p.y += p.vy * dt
+            p.vh -= p.g * dt
+            p.h += p.vh * dt
+            p.ox += p.lx * dt; p.oy += p.ly * dt
+            p.lx *= exp(-dt * 1.5); p.ly *= exp(-dt * 1.5)
+            if p.kind == .stage && p.h < 0 { landed.append((p.bx + p.ox, p.by + p.oy)) }
             debris[k] = p
         }
-        debris.removeAll { t - $0.born > $0.life }
+        debris.removeAll { ($0.kind != .exhaust && $0.h < 0) || t - $0.born > $0.life }
+        for (x, y) in landed { sparks(at: x, y, count: 5, speed: 15...45, t: t) }
     }
 }

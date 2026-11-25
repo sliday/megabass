@@ -31,8 +31,8 @@ The power button is a small procedural world, hashed from the station (or the Sp
 star), fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
 react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
 and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
-Prominent voices (a sung or lead note) launch new satellites off its face, up to 10, orbiting at a
-height set by the note, on the same plane as its rings; when their time is up they fall back and
+Prominent voices (a sung or lead note) launch new satellites off its face on tiny rockets (the spent
+stage falls back), up to 10, orbiting at a height set by the note, on the same plane as its rings; when their time is up they fall back and
 strike the surface in a burst of sparks. A band that shoots up faster than the song's usual blasts
 a solar prominence off the limb: a white-hot loop of plasma that cools and lingers a few seconds.
 Around it: vizamp's particle ridge bent into a circle, pulses up the stalks, sparks under the
