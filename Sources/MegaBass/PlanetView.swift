@@ -461,6 +461,7 @@ struct PlanetView: View, Equatable {
 
         // Ring shadow: the ring band cast onto the planet. Light comes from the top-left, so the
         // shadow is the band shifted down-right, clipped to the disc, soft; the gap lets light through.
+        // Only the front half casts onto the face you see (the back half's shadow lands on the far side).
         if st.rings {
             var sh = ctx
             sh.clip(to: disc)
@@ -468,6 +469,7 @@ struct PlanetView: View, Equatable {
             sh.translateBy(x: c.x + R * 0.16, y: c.y + R * 0.2)
             sh.rotate(by: .radians(planeTilt(st)))
             let inner = R * 1.18, outer = R * (1.18 + st.ringWidth)
+            sh.clip(to: Path(CGRect(x: -outer * 1.1, y: 0, width: outer * 2.2, height: outer * 2)))
             var band = Path()
             band.addEllipse(in: CGRect(x: -outer, y: -outer * ringOpen, width: outer * 2, height: outer * ringOpen * 2))
             band.addEllipse(in: CGRect(x: -inner, y: -inner * ringOpen, width: inner * 2, height: inner * ringOpen * 2))
