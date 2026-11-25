@@ -332,6 +332,9 @@ final class PlanetTextures {
     private var cache: [String: PlanetTexture] = [:]
     private var baking: Set<String> = []
     private let queue = DispatchQueue(label: "megabass.planet-bake", qos: .userInitiated)
+    /// The planet's light as last drawn (eased): its colour, weighted toward the bright parts, and
+    /// its mean brightness 0...1. The card under the planet glows with it.
+    private(set) var sceneLight = SIMD3<Float>(1, 0.6, 0.3), sceneBrightness: Float = 0
 
     // Per-pixel sphere mapping for the current disc size and tilt.
     private var mapKey = ""
@@ -416,8 +419,9 @@ final class PlanetTextures {
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
                 flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
                 sun: Float = 1, iconColor: Color = .white, blur: Float = 0, pitch: Double = 0,
-                liquid: Float = 2, time: Double = 0, wobble: Float = 0) -> CGImage? {
-        let n = Int(R * 4)                                   // diameter at 2x
+                liquid: Float = 2, time: Double = 0, wobble: Float = 0, pixelScale: Double = 1) -> CGImage? {
+        // Diameter at 2x, scaled down when the planet is shown smaller (the widget): no unseen pixels.
+        let n = max(64, Int(R * 4 * min(1, pixelScale)))
         let q = (pitch / 0.004).rounded()                    // the map rebuilds only while the nod moves
         let key = "\(n)|\(tilt)|\(q)"
         if key != mapKey { buildMap(n: n, tilt: tilt, pitch: q * 0.004); mapKey = key }
@@ -579,6 +583,21 @@ final class PlanetTextures {
             }
             let rr = UInt32(max(0, min(255, out.x * 255))), gg = UInt32(max(0, min(255, out.y * 255))), bb = UInt32(max(0, min(255, out.z * 255)))
             pixels[i] = 0xFF00_0000 | (bb << 16) | (gg << 8) | rr
+        }
+        // The scene's light: a sparse grid (~24 x 24) of the drawn pixels, weighted by brightness.
+        let step = max(1, n / 24)
+        var sumC = SIMD3<Float>.zero, sumL: Float = 0, count: Float = 0
+        for y in stride(from: 0, to: n, by: step) {
+            for x in stride(from: 0, to: n, by: step) where inside[y * n + x] {
+                let px = pixels[y * n + x]
+                let c = SIMD3<Float>(Float(px & 0xFF), Float(px >> 8 & 0xFF), Float(px >> 16 & 0xFF)) / 255
+                let l = simd_dot(c, SIMD3<Float>(0.299, 0.587, 0.114))
+                sumC += c * l; sumL += l; count += 1
+            }
+        }
+        if count > 0 {
+            if sumL > 0.001 { sceneLight += (sumC / sumL - sceneLight) * 0.2 }
+            sceneBrightness += (sumL / count - sceneBrightness) * 0.2
         }
         // Copy the pixels into the image: the buffer is reused next frame.
         let data = pixels.withUnsafeBytes { Data($0) }

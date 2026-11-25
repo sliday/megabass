@@ -572,7 +572,7 @@ struct RingVisualizer: View, Equatable {
     static func == (a: RingVisualizer, b: RingVisualizer) -> Bool { a.enabled == b.enabled && a.afterglow == b.afterglow }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 45, paused: !enabled && !afterglow)) { tl in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !enabled && !afterglow)) { tl in      // one 30 fps cadence for every animated view: one commit per frame
             Canvas { ctx, size in
                 let c = CGPoint(x: size.width / 2, y: size.height / 2)
                 let perfStart = PerfMeter.enabled ? Date() : nil

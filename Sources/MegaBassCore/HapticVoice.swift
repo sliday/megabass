@@ -269,13 +269,13 @@ public final class HapticVoice {
                 mirrorEnd = now + seg
                 Clock.wait(until: now + seg * 0.9)
             } else {
-                Clock.wait(until: now + 0.002)
+                Clock.idle(0.001)
             }
             return
         }
         guard let c = next else {
             lock.withLock { _status.level = 0; _status.noteName = ""; _status.hz = 0 }
-            Clock.wait(until: now + 0.002)
+            Clock.idle(0.001)
             return
         }
         let startAt = max(c.start + delay, mirrorEnd > now ? mirrorEnd : 0)
@@ -318,7 +318,7 @@ public final class HapticVoice {
             if n >= t { return }
             let kickDue = lock.withLock { pendingKicks.first.map { $0.t <= n - _delay } ?? false }
             if kickDue { return }
-            Clock.wait(until: min(t, n + 0.001))
+            Clock.idle(min(0.0003, max(0, t - n)))
         }
     }
 
@@ -413,7 +413,7 @@ public enum Clock {
     }()
     public static func now() -> Double { Double(mach_absolute_time()) / ticksPerSecond }
     public static func seconds(hostTime: UInt64) -> Double { Double(hostTime) / ticksPerSecond }
-    /// Sleeps, then spins only for the last ~1.5 ms.
+    /// Sleeps, then spins only for the last ~0.3 ms (sleep wakes within ~0.1 ms on this thread).
     public static func wait(until t: Double) {
         while true {
             let n = now()
@@ -421,4 +421,6 @@ public enum Clock {
             if t - n > 0.0015 { usleep(useconds_t((t - n - 0.0015) * 1e6)) }
         }
     }
+    /// Sleeps without spinning: for polling when nothing is due.
+    public static func idle(_ seconds: Double) { usleep(useconds_t(seconds * 1e6)) }
 }

@@ -141,6 +141,7 @@ struct SongIntensity {
 /// a rotating atmosphere, a drifting storm, sphere shading lit from the top-left, and an atmosphere
 /// halo that flares on kicks. Dark and still when megabass is off.
 struct PlanetView: View, Equatable {
+    @Environment(\.planetPixelScale) private var pixelScale
     /// Read live inside the timeline; not observed, so engine meter updates don't force redraws.
     let engine: Engine
     var radius: CGFloat = 48
@@ -294,7 +295,8 @@ struct PlanetView: View, Equatable {
                                                   blur: eye ? 0 : Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch + (eye ? EyeLook.shared.pitch : 0),
                                                   liquid: Float(0.45 - 1.2 * min(1, OrbitSim.shared.energy * 2.2) * (on ? 1 : 0.3)),   // quiet: a quarter full; loud: ~90 %
                                                   time: OrbitSim.shared.time,
-                                                  wobble: Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick)) {
+                                                  wobble: Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick),
+                                                  pixelScale: pixelScale) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -790,6 +792,16 @@ struct PlanetView: View, Equatable {
                           with: .radialGradient(Gradient(colors: [Color.white.opacity(0.45 * f), color.opacity(0)]), center: p, startRadius: 0, endRadius: r))
             }
         }
+    }
+}
+
+/// How large the planet is drawn relative to the panel (the widget scales it): the render skips
+/// pixels that would not reach the screen.
+private struct PlanetPixelScaleKey: EnvironmentKey { static let defaultValue = 1.0 }
+extension EnvironmentValues {
+    var planetPixelScale: Double {
+        get { self[PlanetPixelScaleKey.self] }
+        set { self[PlanetPixelScaleKey.self] = newValue }
     }
 }
 

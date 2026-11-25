@@ -83,22 +83,35 @@ struct BackgroundGlow: View, Equatable {
     static func == (a: BackgroundGlow, b: BackgroundGlow) -> Bool { a.enabled == b.enabled }
 
     var body: some View {
+        // The gradient is painted once (per palette); the pulse only changes the layer's opacity, so the
+        // window-sized image is not repainted 30 times a second.
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !enabled)) { _ in
-            Canvas { ctx, size in
-                let c = RingSim.shared.ringCenter == .zero ? CGPoint(x: size.width / 2, y: 150) : RingSim.shared.ringCenter
-                let beat = engine.enabled ? WavePhase.shared.pulse * min(1, engine.level * 1.4) : 0
-                let a = 0.05 + 0.05 * beat
-                let r: CGFloat = 200
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                         with: .radialGradient(Gradient(stops: [
-                            .init(color: Theme.hot.opacity(a), location: 0),
-                            .init(color: Theme.hot.opacity(a * 0.6), location: 0.35),
-                            .init(color: Theme.hot.opacity(a * 0.18), location: 0.7),
-                            .init(color: Theme.hot.opacity(0), location: 1),
-                         ]), center: c, startRadius: 0, endRadius: r))
-            }
+            let beat = engine.enabled ? WavePhase.shared.pulse * min(1, engine.level * 1.4) : 0
+            GlowDisc(center: RingSim.shared.ringCenter, color: Theme.hot)
+                .equatable()
+                .opacity(0.05 + 0.05 * beat)
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The window glow at full strength: repaints only when the palette or the centre moves.
+private struct GlowDisc: View, Equatable {
+    let center: CGPoint
+    let color: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            let c = center == .zero ? CGPoint(x: size.width / 2, y: 150) : center
+            let r: CGFloat = 200
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                     with: .radialGradient(Gradient(stops: [
+                        .init(color: color, location: 0),
+                        .init(color: color.opacity(0.6), location: 0.35),
+                        .init(color: color.opacity(0.18), location: 0.7),
+                        .init(color: color.opacity(0), location: 1),
+                     ]), center: c, startRadius: 0, endRadius: r))
+        }
     }
 }
 
@@ -106,11 +119,14 @@ struct BackgroundGlow: View, Equatable {
 /// edge in the palette, as strong as the planet is bright (the song's loudness), flashing on kicks.
 struct PlanetSpill: View {
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
             Canvas { ctx, size in
-                let o = OrbitSim.shared
-                let a = min(0.45, 0.05 + 0.22 * min(1, o.energy * 2.2) + 0.15 * o.flash)
-                let col = Theme.hot, mid = size.width / 2
+                // The planet's own light: its colour (brightest parts weighted), as strong as the planet
+                // is bright times the song's intensity, flashing on kicks.
+                let o = OrbitSim.shared, pl = PlanetTextures.shared
+                let lc = pl.sceneLight / max(0.05, pl.sceneLight.max())                          // full-strength hue
+                let a = min(0.5, 0.03 + 0.4 * Double(pl.sceneBrightness) * (0.4 + 0.6 * min(1, o.energy * 2.2)) + 0.15 * o.flash)
+                let col = Color(red: Double(lc.x), green: Double(lc.y), blue: Double(lc.z)), mid = size.width / 2
                 ctx.fill(Path(CGRect(origin: .zero, size: size)),
                          with: .linearGradient(Gradient(colors: [col.opacity(a * 0.7), col.opacity(0)]),
                                                startPoint: CGPoint(x: mid, y: 0), endPoint: CGPoint(x: mid, y: min(size.height, 80))))
@@ -220,6 +236,7 @@ struct WidgetView: View {
             ZStack {
                 // The hero is laid out for 280 pt; scale it to the window.
                 PowerRing(engine: engine, planet: PlanetStyle.from(hub.planetKey), draggable: true)
+                    .environment(\.planetPixelScale, min(1, side / 280))
                     .frame(width: 280, height: 280)
                     .scaleEffect(side / 280)
                     .frame(width: side, height: side)
