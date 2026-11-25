@@ -251,6 +251,54 @@ struct PlanetView: View, Equatable {
             }
         }
 
+        // Mirror ball: its facets throw beams of light through a haze. Each facet turns with the ball and
+        // reflects the light (up left, in front), so the beams sweep, stretch and blink out as facets
+        // pass the light; louder music and kicks brighten them.
+        if st.kind == .disco {
+            var glow = ctx
+            glow.blendMode = .plusLighter
+            let e = on ? min(1, OrbitSim.shared.energy * 2.2) : 0
+            let haze = mix(heat, .white, 0.4), fogR = R * 2.3
+            glow.fill(Path(ellipseIn: CGRect(x: c.x - fogR, y: c.y - fogR, width: fogR * 2, height: fogR * 2)),
+                      with: .radialGradient(Gradient(colors: [haze.opacity(on ? 0.1 + 0.12 * e : 0.03), haze.opacity(0)]),
+                                            center: c, startRadius: R * 0.8, endRadius: fogR))
+            let L = (x: -0.45 / 1.0, y: -0.5 / 1.0, z: 0.74 / 1.0)
+            let ln = sqrt(L.x * L.x + L.y * L.y + L.z * L.z)
+            let l = (x: L.x / ln, y: L.y / ln, z: L.z / ln)
+            var rng = PlanetStyle.SplitMix64(state: PlanetStyle.fnv1a(st.key + "facets"))
+            let turn = PlanetSpin.shared.lon
+            for _ in 0..<32 {
+                let th = rng.range(-1, 1), a = rng.range(0, 2 * .pi) + turn, pick = rng.unit()
+                let n = (x: cos(th) * sin(a), y: -sin(th), z: cos(th) * cos(a))
+                let lit = n.x * l.x + n.y * l.y + n.z * l.z
+                guard n.z > 0.05, lit > 0.2 else { continue }
+                // The incoming light (-l) reflected about the facet normal.
+                let r = (x: -l.x + 2 * lit * n.x, y: -l.y + 2 * lit * n.y)
+                let flat = hypot(r.x, r.y)
+                guard flat > 0.15 else { continue }
+                let dir = (x: r.x / flat, y: r.y / flat)
+                let start = CGPoint(x: c.x + n.x * R, y: c.y + n.y * R)
+                let len = R * (0.7 + 1.5 * flat)
+                let end = CGPoint(x: start.x + dir.x * len, y: start.y + dir.y * len)
+                let w = R * 0.07 * (0.6 + flat)
+                var beam = Path()
+                beam.move(to: start)
+                beam.addLine(to: CGPoint(x: end.x - dir.y * w, y: end.y + dir.x * w))
+                beam.addLine(to: CGPoint(x: end.x + dir.y * w, y: end.y - dir.x * w))
+                beam.closeSubpath()
+                let col = pick < 0.5 ? Color.white : (pick < 0.75 ? hot : heat)
+                let s = min(1, (lit - 0.2) * 1.6) * (on ? 0.4 + 0.45 * e + 0.35 * kick : 0.08)
+                glow.fill(beam, with: .linearGradient(Gradient(colors: [col.opacity(s), col.opacity(0)]), startPoint: start, endPoint: end))
+                let tip = CGPoint(x: start.x + dir.x * len * 0.7, y: start.y + dir.y * len * 0.7)
+                var core = Path(); core.move(to: start); core.addLine(to: tip)
+                glow.stroke(core, with: .linearGradient(Gradient(colors: [Color.white.opacity(min(1, s * 1.5)), Color.white.opacity(0)]),
+                                                        startPoint: start, endPoint: tip), lineWidth: 0.7)
+                let sr = 3 + 3 * s
+                glow.fill(Path(ellipseIn: CGRect(x: end.x - sr, y: end.y - sr, width: sr * 2, height: sr * 2)),
+                          with: .radialGradient(Gradient(colors: [col.opacity(s * 0.8), col.opacity(0)]), center: end, startRadius: 0, endRadius: sr))
+            }
+        }
+
         // Thin atmosphere: a tight bright shell on the limb plus two faint outer layers.
         if on && st.kind != .star {
             let r2 = R * 1.1
