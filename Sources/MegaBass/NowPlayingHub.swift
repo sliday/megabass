@@ -56,7 +56,7 @@ final class NowPlayingHub: ObservableObject {
 
     /// cliamp: one look per station. Spotify/Music: one per song (title + artist).
     var songKey: String { active == .cliamp ? "" : now.title + "|" + now.artist }
-    var paletteKey: String { active.rawValue + ":" + cliamp.station + ":" + songKey }
+    var paletteKey: String { active.rawValue + ":" + cliamp.station + ":" + songKey + (planetRolls[basePlanetKey].map { "#" + $0 } ?? "") }
     private var basePlanetKey: String {
         active == .cliamp ? "cliamp:" + (cliamp.station.isEmpty ? "megabass" : cliamp.station) : active.rawValue + ":" + songKey
     }
@@ -65,7 +65,10 @@ final class NowPlayingHub: ObservableObject {
     @Published private var planetRolls: [String: String] = [:]
     func rollPlanet() { planetRolls[basePlanetKey] = String(UInt64.random(in: 0...UInt64.max), radix: 36) }
     func applyPalette() {
-        ThemeAnimator.shared.go(to: Palettes.current(source: active, station: cliamp.station, song: songKey), key: paletteKey)
+        // A rerolled planet (the dice) gets a rerolled palette too.
+        let palette = planetRolls[basePlanetKey].map { Palettes.song("roll:" + $0) }
+            ?? Palettes.current(source: active, station: cliamp.station, song: songKey)
+        ThemeAnimator.shared.go(to: palette, key: paletteKey)
     }
 
     // MARK: Polling
