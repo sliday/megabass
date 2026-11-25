@@ -876,8 +876,10 @@ final class OrbitSim {
     func step(t: Double, kick: Double, levels: [Double], R: Double, on: Bool, now: Double = 0) {
         let dt = time == 0 ? 0 : min(0.1, t - time)
         time = t
-        // Six band groups, low to high.
-        if !levels.isEmpty {
+        // Six band groups, low to high; with nothing coming in (off) they fade out.
+        if levels.isEmpty {
+            for k in 0..<6 { groups[k] *= exp(-dt * 3) }
+        } else {
             let n = levels.count
             for k in 0..<6 {
                 let a = k * n / 6, b = max(a + 1, (k + 1) * n / 6)

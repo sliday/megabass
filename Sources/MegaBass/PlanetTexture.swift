@@ -542,6 +542,11 @@ final class PlanetTextures {
                     out += (rimTint * 0.6 + SIMD3<Float>(repeating: 0.4)) * (1 - abs(nrm.y - wave) / 0.02)
                 }
             }
+            // Off: the planet goes grey; the power icon is drawn after, so its LED stays lit.
+            if !on {
+                let g = (out.x + out.y + out.z) / 3 * 0.45
+                out = SIMD3(repeating: g)
+            }
             if icon {
                 // Longitude on the texture, relative to the decal, wrapped to -pi...pi.
                 var dl = (lonBase[i] + shift) / Float(W) * 2 * .pi
@@ -558,28 +563,23 @@ final class PlanetTextures {
                         let away = max(0, (gx - gy) / max(0.001, rr * 1.414))
                         out += out * band * away * away * 1.4
                     }
+                    // An LED: a thin dark rim just outside the glyph so it reads on any ground, then the
+                    // glyph screen-blended (it only adds light). On: bright, with a halo. Off: a dim
+                    // standby glow in the palette colour.
                     let a = glyphAt(gu, gv)
+                    let wide = glyphAt((gu - 0.5) * 0.86 + 0.5, (gv - 0.5) * 0.86 + 0.5)
+                    out *= 1 - max(0, wide - a) * 0.6
+                    let one = SIMD3<Float>(repeating: 1)
                     if on {
-                        // Glowing: a soft halo from the glyph sampled at 1.25x, then the lit glyph itself.
                         let halo = glyphAt((gu - 0.5) * 0.8 + 0.5, (gv - 0.5) * 0.8 + 0.5) * 0.5
                             + glyphAt((gu - 0.5) * 0.65 + 0.5, (gv - 0.5) * 0.65 + 0.5) * 0.25
-                        out += iconLight * halo * (1 - a) * 0.55
-                        // Screen blend: the glyph only ever adds light, never greys the surface under it.
-                        if a > 0.01 { out = SIMD3<Float>(repeating: 1) - (SIMD3<Float>(repeating: 1) - out) * (SIMD3<Float>(repeating: 1) - simd_min(iconBase * 1.15, SIMD3<Float>(repeating: 1)) * a) }
-                    } else {
-                        let shadow = glyphAt(gu - 0.035, gv - 0.035)
-                        if shadow > 0.01 { out *= 1 - shadow * 0.45 * (1 - a) }           // soft drop shadow
-                        if a > 0.01 {
-                            let lam = max(0, (simd_dot(nrm, L) + 0.25) / 1.25)
-                            let ink = simd_min(iconBase * (0.3 + 0.75 * lam), SIMD3<Float>(repeating: 1)) * a * 0.94
-                            out = SIMD3<Float>(repeating: 1) - (SIMD3<Float>(repeating: 1) - out) * (SIMD3<Float>(repeating: 1) - ink)   // screen
-                        }
+                        out += iconLight * halo * (1 - wide) * 0.55
+                        if a > 0.01 { out = one - (one - out) * (one - simd_min(iconBase * 1.15, one) * a) }
+                    } else if a > 0.01 {
+                        let led = simd_min(iconLight * 0.6 + 0.1, one)
+                        out = one - (one - out) * (one - led * a)
                     }
                 }
-            }
-            if !on {
-                let g = (out.x + out.y + out.z) / 3 * 0.45
-                out = SIMD3(repeating: g)
             }
             let rr = UInt32(max(0, min(255, out.x * 255))), gg = UInt32(max(0, min(255, out.y * 255))), bb = UInt32(max(0, min(255, out.z * 255)))
             pixels[i] = 0xFF00_0000 | (bb << 16) | (gg << 8) | rr

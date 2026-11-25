@@ -53,17 +53,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        // One planet at a time: the widget steps aside while the menu-bar popover is open.
+        // The floating panel (and the preview window) follow their content's height, top edge fixed.
+        LayoutState.shared.panelSize = { [weak self] size in
+            guard let self, size.height > 0 else { return }
+            for w in [self.panel as NSWindow?, self.preview].compactMap({ $0 }) where w.contentView is NSHostingView<PopoverView> {
+                let frame = w.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+                guard abs(frame.height - w.frame.height) > 0.5 else { continue }
+                var f = w.frame
+                let top = f.maxY
+                f.size.height = frame.height
+                f.origin.y = top - frame.height
+                w.setFrame(f, display: true, animate: false)
+            }
+        }
+        // One planet at a time: whichever floating window is showing (the panel or the widget) steps
+        // aside while the menu-bar popover is open, and comes back when it closes.
         LayoutState.shared.menuOpen = { [weak self] open in
             DispatchQueue.main.async {
-                guard let self, LayoutState.shared.compact else { return }
-                if open { self.widget?.orderOut(nil) } else { self.widget?.orderFrontRegardless() }
+                guard let self else { return }
+                if open {
+                    self.steppedAside = [self.panel, self.widget].compactMap { $0 }.filter(\.isVisible)
+                    self.steppedAside.forEach { $0.orderOut(nil) }
+                } else {
+                    self.steppedAside.forEach { $0.orderFrontRegardless() }
+                    self.steppedAside = []
+                }
             }
         }
         if args.contains("--gallery") {
             // Every planet type, lit, for review.
             let grid = VStack(spacing: 8) {
-                ForEach(0..<3, id: \.self) { row in
+                ForEach(0..<((PlanetStyle.Kind.allCases.count + 3) / 4), id: \.self) { row in
                     HStack(spacing: 8) {
                         ForEach(Array(PlanetStyle.Kind.allCases.enumerated()).filter { $0.offset / 4 == row }, id: \.offset) { _, k in
                             VStack(spacing: 2) {
@@ -139,6 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var widget: NSPanel?
+    /// Windows hidden while the menu-bar popover is open.
+    private var steppedAside: [NSWindow] = []
 
     /// Panel <-> widget: the planet flies between the panel's hero spot and the widget's corner
     /// (0.35 s, ease in-out) while the other window fades. The widget's saved frame is restored after.

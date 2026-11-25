@@ -41,6 +41,12 @@ struct PopoverView: View {
         .onAppear { applyPalette() }
         .onChange(of: paletteKey) { _ in applyPalette() }
         .environment(\.colorScheme, .dark)
+        .fixedSize(horizontal: false, vertical: true)        // its own height, not the window's, so it can be measured
+        .background(GeometryReader { g in
+            Color.clear
+                .onAppear { if !inMenu { LayoutState.shared.panelSize?(g.size) } }
+                .onChange(of: g.size) { size in if !inMenu { LayoutState.shared.panelSize?(size) } }
+        })
         .onAppear { hub.startPolling(); if inMenu { LayoutState.shared.menuOpen?(true) } }
         .onDisappear { hub.stopPolling(); if inMenu { LayoutState.shared.menuOpen?(false) } }
     }
@@ -66,22 +72,25 @@ struct PopoverView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Turn trackpad haptics on or off. Clicking the planet does the same.")
-                // Controls first, then what they produce: Range, Strength, then the trackpad.
-                LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
-                    .opacity(engine.enabled ? 1 : 0.4)
-                ValueSlider(label: "Strength", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
-                HapticPad(engine: engine)
-                    .opacity(engine.enabled ? 1 : 0.4)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text("Overdrive").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
-                        Spacer()
-                        Toggle("", isOn: Binding(get: { engine.overdrive > 0 }, set: { engine.overdrive = $0 ? 1 : 0 }))
-                            .toggleStyle(.switch).controlSize(.mini).tint(Theme.hot).labelsHidden()
+                // Off: just the switch. On: the controls, then what they produce (Range, Strength, the
+                // trackpad), then Overdrive.
+                if engine.enabled {
+                    VStack(alignment: .leading, spacing: 12) {
+                        LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
+                        ValueSlider(label: "Strength", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                        HapticPad(engine: engine)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text("Overdrive").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
+                                Spacer()
+                                Toggle("", isOn: Binding(get: { engine.overdrive > 0 }, set: { engine.overdrive = $0 ? 1 : 0 }))
+                                    .toggleStyle(.switch).controlSize(.mini).tint(Theme.hot).labelsHidden()
+                            }
+                            Text("Kicks hit harder, with extra rumble.").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                        }
                     }
-                    Text("Kicks hit harder, with extra rumble.").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .opacity(engine.enabled ? 1 : 0.4)
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
@@ -665,3 +674,4 @@ struct NowPlaying: View {
         .help(label)
     }
 }
+

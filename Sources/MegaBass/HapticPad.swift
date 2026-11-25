@@ -122,16 +122,22 @@ struct PlanetSpill: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
             Canvas { ctx, size in
                 // The planet's own light: its colour (brightest parts weighted), as strong as the planet
-                // is bright times the song's intensity, flashing on kicks.
+                // is bright times the song's intensity, flashing on kicks. Off or quiet: nearly dark.
                 let o = OrbitSim.shared, pl = PlanetTextures.shared
-                let lc = pl.sceneLight / max(0.05, pl.sceneLight.max())                          // full-strength hue
-                let a = min(0.5, 0.03 + 0.4 * Double(pl.sceneBrightness) * (0.4 + 0.6 * min(1, o.energy * 2.2)) + 0.15 * o.flash)
+                let lc = pl.sceneLight / max(0.05, pl.sceneLight.max())                // full-strength hue
+                let intensity = 0.1 + 0.9 * min(1, o.energy * 2.5)
+                let a = min(0.6, 0.015 + 0.65 * Double(pl.sceneBrightness) * intensity + 0.2 * o.flash)
                 let col = Color(red: Double(lc.x), green: Double(lc.y), blue: Double(lc.z)), mid = size.width / 2
-                ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                         with: .linearGradient(Gradient(colors: [col.opacity(a * 0.7), col.opacity(0)]),
-                                               startPoint: CGPoint(x: mid, y: 0), endPoint: CGPoint(x: mid, y: min(size.height, 80))))
-                ctx.fill(Path(ellipseIn: CGRect(x: mid - 130, y: -70, width: 260, height: 140)),
-                         with: .radialGradient(Gradient(colors: [col.opacity(a), col.opacity(0)]), center: CGPoint(x: mid, y: 0), startRadius: 0, endRadius: 130))
+                // An elliptical pool of light hanging from the top edge, fading to nothing (no edge of its own).
+                var pool = ctx
+                pool.scaleBy(x: 1, y: 0.5)
+                pool.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: size.height * 2)),
+                          with: .radialGradient(Gradient(stops: [
+                            .init(color: col.opacity(a), location: 0),
+                            .init(color: col.opacity(a * 0.45), location: 0.35),
+                            .init(color: col.opacity(a * 0.12), location: 0.7),
+                            .init(color: col.opacity(0), location: 1),
+                          ]), center: CGPoint(x: mid, y: 0), startRadius: 0, endRadius: size.width * 0.6))
                 var edge = Path()
                 edge.move(to: CGPoint(x: 10, y: 0.5)); edge.addLine(to: CGPoint(x: size.width - 10, y: 0.5))
                 ctx.stroke(edge, with: .linearGradient(Gradient(colors: [col.opacity(0), col.opacity(min(1, a * 1.8)), col.opacity(0)]),
@@ -219,6 +225,8 @@ final class LayoutState: ObservableObject {
     var hideAll: (() -> Void)?
     /// The menu-bar popover opened (true) or closed (false).
     var menuOpen: ((Bool) -> Void)?
+    /// The panel's content changed size (a card collapsed, a banner appeared): fit the window to it.
+    var panelSize: ((CGSize) -> Void)?
 }
 
 /// The planet widget: just the planet and its ring, filling a borderless square window that
