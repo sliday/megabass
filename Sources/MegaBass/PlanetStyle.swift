@@ -30,6 +30,8 @@ struct PlanetStyle: Equatable {
     let rings: Bool
     let ringTilt: Double        // radians
     let ringWidth: Double       // fraction of radius
+    let ringLines: Int          // 8...14 lines
+    let ringGap: Int            // index of a dark Cassini-style gap, -1 for none
     let atmosphere: Double      // atmosphere strength multiplier
     let starClass: Int          // stars only: 0 red dwarf, 1 orange, 2 yellow, 3 white, 4 blue-white
 
@@ -63,9 +65,11 @@ struct PlanetStyle: Equatable {
         let storms = (0..<Int(r.unit() * 4)).map { _ in
             Storm(lat: r.range(-0.6, 0.6), lon: r.range(0, 2 * .pi), size: r.range(0.18, 0.4))
         }
-        let rings = r.unit() < 0.35
+        let rings = r.unit() < 0.55
         let ringTilt = r.range(-0.5, 0.5)
-        let ringWidth = r.range(0.18, 0.4)
+        let ringWidth = r.range(0.24, 0.46)
+        let ringLines = 8 + Int(r.unit() * 7)
+        let ringGap = r.unit() < 0.6 ? 2 + Int(r.unit() * Double(max(1, ringLines - 4))) : -1
         var atmosphere = r.range(0.7, 1.4)
         let kind = Kind.allCases[Int(r.unit() * Double(Kind.allCases.count)) % Kind.allCases.count]
         func blobs(_ n: Int, _ a: Double, _ b: Double, lat: Double = 0.95) -> [Blob] {
@@ -92,6 +96,7 @@ struct PlanetStyle: Equatable {
         return PlanetStyle(key: key, code: code, kind: kind, blobs: land, clouds: clouds, craters: craters,
                            cracks: cracks, caps: caps, bands: bands, wave: wave, detail: detail, tilt: tilt, spin: spin,
                            storms: storms, rings: kind == .star ? false : rings, ringTilt: ringTilt, ringWidth: ringWidth,
+                           ringLines: ringLines, ringGap: ringGap,
                            atmosphere: atmosphere, starClass: starClass)
     }
 

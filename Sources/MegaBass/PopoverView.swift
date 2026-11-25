@@ -26,7 +26,7 @@ struct PopoverView: View {
 
     var body: some View {
         full.padding(16)
-            .background(BackgroundGlow(engine: engine))
+            .background(BackgroundGlow(engine: engine, enabled: engine.enabled).equatable())
         .frame(width: 300)
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
@@ -189,13 +189,15 @@ struct PowerRing: View {
     var body: some View {
         ZStack {
             // vizamp's particle ridge, bent into a circle.
-            RingVisualizer(engine: engine)
+            RingVisualizer(engine: engine, enabled: engine.enabled, afterglow: engine.afterglow)
+                .equatable()
                 .frame(width: 280, height: 280)          // sparks fly past the hero's box; layout stays 168
             Button(action: { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } }) {
                 ZStack {
                     // A small gas giant with an atmosphere; the halo spills past the 96 pt hit area.
                     // The power icon lives on the planet's surface (see PlanetSpin).
-                    PlanetView(engine: engine, radius: 48, style: planet)
+                    PlanetView(engine: engine, radius: 48, style: planet, enabled: engine.enabled)
+                        .equatable()
                         .frame(width: 200, height: 200)
                 }
                 .frame(width: 96, height: 96)

@@ -445,6 +445,26 @@ final class RingSim {
     }
 }
 
+/// MB_PERF=1: average draw time per frame for each visual, printed every 2 s to stderr.
+@MainActor
+final class PerfMeter {
+    static let shared = PerfMeter()
+    static let enabled = ProcessInfo.processInfo.environment["MB_PERF"] != nil
+    private var sums: [String: (Double, Int)] = [:]
+    private var last = Date()
+
+    func add(_ name: String, _ seconds: Double) {
+        var e = sums[name] ?? (0, 0)
+        e.0 += seconds; e.1 += 1
+        sums[name] = e
+        if Date().timeIntervalSince(last) >= 2 {
+            let line = sums.sorted { $0.key < $1.key }.map { "\($0.key) \(String(format: "%.2f", $0.value.0 / Double(max(1, $0.value.1)) * 1000)) ms x\($0.value.1 / 2)/s" }.joined(separator: "  ")
+            FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+            sums.removeAll(); last = Date()
+        }
+    }
+}
+
 /// vizamp's dark heat palette: ember → orange → cream → ice → lilac.
 enum Heat {
     static let stops: [(Double, Double, Double)] = [(0.38, 0.055, 0.025), (0.91, 0.24, 0.07), (1, 0.64, 0.24), (1, 0.93, 0.78), (0.69, 0.84, 1), (0.94, 0.76, 1)]
@@ -460,14 +480,21 @@ enum Heat {
 }
 
 /// The ring itself.
-struct RingVisualizer: View {
-    @ObservedObject var engine: Engine
+struct RingVisualizer: View, Equatable {
+    /// Read live inside the timeline; not observed, so engine meter updates don't force redraws.
+    let engine: Engine
+    var enabled = true
+    var afterglow = false
     private let sim = RingSim.shared
 
+    static func == (a: RingVisualizer, b: RingVisualizer) -> Bool { a.enabled == b.enabled && a.afterglow == b.afterglow }
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 45, paused: !engine.enabled && !engine.afterglow)) { tl in
+        TimelineView(.animation(minimumInterval: 1.0 / 45, paused: !enabled && !afterglow)) { tl in
             Canvas { ctx, size in
                 let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let perfStart = PerfMeter.enabled ? Date() : nil
+                defer { if let p = perfStart { PerfMeter.shared.add("ring", Date().timeIntervalSince(p)) } }
                 if !engine.enabled { drawIdle(ctx, c) }
                 guard engine.enabled || engine.afterglow else { return }
                 // Switched off: keep simulating with silence so whatever is in flight falls back.

@@ -51,15 +51,22 @@ final class PlanetSpin {
 /// The power button as a small gas giant: banded surface in the station's palette that flows like
 /// a rotating atmosphere, a drifting storm, sphere shading lit from the top-left, and an atmosphere
 /// halo that flares on kicks. Dark and still when megabass is off.
-struct PlanetView: View {
-    @ObservedObject var engine: Engine
+struct PlanetView: View, Equatable {
+    /// Read live inside the timeline; not observed, so engine meter updates don't force redraws.
+    let engine: Engine
     var radius: CGFloat = 48
     var style = PlanetStyle.from("megabass")
     /// Draw lit even when megabass is off (gallery).
     var alwaysOn = false
+    /// On/off, passed in so the view redraws when it changes (and pauses its timeline when off).
+    var enabled = true
+
+    static func == (a: PlanetView, b: PlanetView) -> Bool {
+        a.radius == b.radius && a.style == b.style && a.alwaysOn == b.alwaysOn && a.enabled == b.enabled
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !engine.enabled && !alwaysOn)) { tl in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !enabled && !alwaysOn)) { tl in
             Canvas { ctx, size in
                 draw(ctx, size: size, t: tl.date.timeIntervalSinceReferenceDate)
             }
@@ -91,7 +98,10 @@ struct PlanetView: View {
     /// One frame: advance the orbits once, then draw the planet, cross-fading from the previous
     /// style for 1.2 s when the station or song changes.
     private func draw(_ ctx: GraphicsContext, size: CGSize, t: Double) {
+        let perfStart = PerfMeter.enabled ? Date() : nil
+        defer { if let p = perfStart { PerfMeter.shared.add("planet", Date().timeIntervalSince(p)) } }
         let on = engine.enabled || alwaysOn
+        _ = WavePhase.shared.advance(t: t, hz: engine.hapticHz)          // rings pulse with the trackpad wave
         OrbitSim.shared.step(t: t, kick: on ? engine.kickPulse : 0, levels: on ? RingSim.shared.levels : [], R: Double(radius), on: on)
         guard !alwaysOn, let (from, p) = PlanetMorph.shared.update(to: style, t: t) else {
             drawPlanet(ctx, size: size, t: t, st: style)
@@ -322,6 +332,27 @@ struct PlanetView: View {
             }
         }
 
+        // Ring shadow: the ring band cast onto the planet. Light comes from the top-left, so the
+        // shadow is the band shifted down-right, clipped to the disc, soft; the gap lets light through.
+        if st.rings {
+            var sh = ctx
+            sh.clip(to: disc)
+            sh.addFilter(.blur(radius: 1.6))
+            sh.translateBy(x: c.x + R * 0.16, y: c.y + R * 0.2)
+            sh.rotate(by: .radians(planeTilt(st)))
+            let inner = R * 1.18, outer = R * (1.18 + st.ringWidth)
+            var band = Path()
+            band.addEllipse(in: CGRect(x: -outer, y: -outer * 0.24, width: outer * 2, height: outer * 0.48))
+            band.addEllipse(in: CGRect(x: -inner, y: -inner * 0.24, width: inner * 2, height: inner * 0.48))
+            if st.ringGap >= 0 {
+                let g0 = inner + (outer - inner) * Double(st.ringGap) / Double(st.ringLines - 1)
+                let g1 = inner + (outer - inner) * Double(st.ringGap + 1) / Double(st.ringLines - 1)
+                band.addEllipse(in: CGRect(x: -g1, y: -g1 * 0.24, width: g1 * 2, height: g1 * 0.48))
+                band.addEllipse(in: CGRect(x: -g0, y: -g0 * 0.24, width: g0 * 2, height: g0 * 0.48))
+            }
+            sh.fill(band, with: .color(.black.opacity(on ? 0.42 : 0.22)), style: FillStyle(eoFill: true))
+        }
+
         // Moon shadows on the surface: light comes from the top-left, so a moon in front of the
         // disc throws a soft shadow down-right, further the higher it floats above the surface.
         if on {
@@ -400,16 +431,22 @@ struct PlanetView: View {
         g.rotate(by: .radians(planeTilt(style)))
         g.clip(to: Path(CGRect(x: -R * 3, y: front ? 0 : -R * 3, width: R * 6, height: R * 3)))
         let inner = R * 1.18, outer = R * (1.18 + style.ringWidth)
-        let lines = 6
-        for k in 0..<lines {
-            let lv = on ? orbit.groups[k] : 0
-            let since = orbit.time - orbit.kickAt - Double(k) * 0.035
+        let lines = style.ringLines
+        let wave = WavePhase.shared
+        for k in 0..<lines where k != style.ringGap && k != style.ringGap + 1 {
+            let x = Double(k) / Double(lines - 1)
+            let lv = on ? orbit.groups[min(5, k * 6 / lines)] : 0
+            // Kick ripple: inner line to outer, 35 ms per line, swelling each by 3 %.
+            let since = orbit.time - orbit.kickAt - x * 0.21
             let bump = on && since >= 0 && since < 0.07 ? sin(.pi * since / 0.07) : 0
-            let rx = (inner + (outer - inner) * Double(k) / Double(lines - 1)) * (1 + 0.03 * bump), ry = rx * 0.24
-            let base = on ? 0.15 + 0.6 * lv : 0.12
-            let alpha = min(1, base + 0.5 * bump) * (front ? 1 : 0.6)
+            // Haptic waves: brightness travels outward across the lines with the trackpad's soundwave.
+            let pulse = on ? (0.5 + 0.5 * sin(2 * .pi * (x * 1.6 - wave.phase))) * min(1, (orbit.groups[0] + 0.15) * 1.6) : 0
+            let rx = (inner + (outer - inner) * x) * (1 + 0.03 * bump), ry = rx * 0.24
+            let base = on ? 0.3 + 0.6 * lv : 0.14
+            let alpha = min(1, base * (0.55 + 0.45 * pulse) + 0.5 * bump) * (front ? 1 : 0.6)
+            let tint = mix(color, .white, min(0.6, 0.25 * pulse + 0.35 * bump))
             g.stroke(Path(ellipseIn: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2)),
-                     with: .color(color.opacity(alpha)), lineWidth: on ? 0.6 + 1.0 * lv + bump : 1.2)
+                     with: .color(tint.opacity(alpha)), lineWidth: on ? 0.9 + 1.4 * lv + bump + 0.6 * pulse : 1.2)
         }
         // Shepherd wakes: a bright 30° smear along the line their moon rides.
         if on && style.rings {
@@ -454,7 +491,12 @@ struct PlanetView: View {
                 }
                 let tint = mix(color, .white, orbit.speed * 0.5)
                 let strength = 0.45 + orbit.speed * 0.5
-                for layer in [(cut: 1.0, w: 0.35, a: 0.35), (cut: 0.66, w: 0.7, a: 0.6), (cut: 0.33, w: 1.0, a: 1.0)] {
+                // Ten layers: each newer slice adds a little width and light, so the taper is smooth.
+                let layers = (0..<10).map { k -> (cut: Double, w: Double, a: Double) in
+                    let f = Double(k) / 9
+                    return (cut: 1 - f * 0.9, w: 0.25 + 0.75 * f, a: (0.3 + 0.7 * f) / 3.2)
+                }
+                for layer in layers {
                     var path = Path(); var open = false
                     for q in pts {
                         if q.side == front && q.ageFrac <= layer.cut {

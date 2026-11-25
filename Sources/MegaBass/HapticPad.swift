@@ -77,12 +77,13 @@ struct HapticPad: View {
 
 /// A soft radial glow behind the panel, centred on the planet, ~200 pt across: 5 % at rest,
 /// up to 10 %, breathing with the trackpad's soundwave.
-struct BackgroundGlow: View {
-    @ObservedObject var engine: Engine
-    @Environment(\.themeTick) private var themeTick
+struct BackgroundGlow: View, Equatable {
+    let engine: Engine
+    var enabled = true
+    static func == (a: BackgroundGlow, b: BackgroundGlow) -> Bool { a.enabled == b.enabled }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !engine.enabled)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !enabled)) { _ in
             Canvas { ctx, size in
                 let c = RingSim.shared.ringCenter == .zero ? CGPoint(x: size.width / 2, y: 150) : RingSim.shared.ringCenter
                 let beat = engine.enabled ? WavePhase.shared.pulse * min(1, engine.level * 1.4) : 0

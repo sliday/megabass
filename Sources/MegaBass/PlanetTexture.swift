@@ -265,29 +265,43 @@ final class PlanetTextures {
         return SIMD3(Float(n.redComponent), Float(n.greenComponent), Float(n.blueComponent))
     }
 
-    /// The texture for a style, or nil while it bakes (the caller draws the vector fallback).
+    /// The texture for a style. Never flickers: an exact hit returns at once; a new palette version
+    /// of a planet keeps showing the previous one while it bakes; a planet seen for the first time is
+    /// baked right here (6-15 ms, once) so the vector fallback never flashes.
+    private var latest: [String: PlanetTexture] = [:]      // newest texture per planet
+    private var order: [String] = []                       // cache keys, oldest first
+
     func texture(for st: PlanetStyle, hot: Color, heat: Color) -> PlanetTexture? {
         // Gas giants take their colours from the palette, so the palette is part of their key.
-        let q = (Self.rgb(hot) * Float(12)).rounded(.toNearestOrEven)                       // palette quantised: fades re-bake a few times, not per frame
+        let q = (Self.rgb(hot) * Float(12)).rounded(.toNearestOrEven)
         let key = st.kind == .gasGiant ? st.key + "|\(q)" : st.key
-        if let t = cache[key] { return t }
-        if !baking.contains(key) {
-            baking.insert(key)
-            let h = Self.rgb(hot), e = Self.rgb(heat)
-            queue.async {
-                let t0 = Date()
-                let tex = PlanetTexture.bake(style: st, hot: h, heat: e)
-                if ProcessInfo.processInfo.environment["MB_BAKE_LOG"] != nil {
-                    FileHandle.standardError.write("baked \(st.kind.rawValue) in \(Int(Date().timeIntervalSince(t0) * 1000)) ms\n".data(using: .utf8)!)
-                }
-                DispatchQueue.main.async {
-                    self.baking.remove(key)
-                    if self.cache.count > 24 { self.cache.removeAll() }
-                    self.cache[key] = tex
+        if let t = cache[key] { latest[st.key] = t; return t }
+        let h = Self.rgb(hot), e = Self.rgb(heat)
+        if let prev = latest[st.key] {
+            if !baking.contains(key) {
+                baking.insert(key)
+                queue.async {
+                    let tex = PlanetTexture.bake(style: st, hot: h, heat: e)
+                    DispatchQueue.main.async { self.baking.remove(key); self.store(tex, key: key, planet: st.key) }
                 }
             }
+            return prev
         }
-        return nil
+        let t0 = Date()
+        let tex = PlanetTexture.bake(style: st, hot: h, heat: e)
+        if ProcessInfo.processInfo.environment["MB_PERF"] != nil {
+            FileHandle.standardError.write("first bake \(st.kind.rawValue) \(Int(Date().timeIntervalSince(t0) * 1000)) ms\n".data(using: .utf8)!)
+        }
+        store(tex, key: key, planet: st.key)
+        return tex
+    }
+
+    private func store(_ tex: PlanetTexture, key: String, planet: String) {
+        cache[key] = tex
+        latest[planet] = tex
+        order.removeAll { $0 == key }
+        order.append(key)
+        while order.count > 6 { cache.removeValue(forKey: order.removeFirst()) }    // ~13 MB each; oldest first, never all
     }
 
     /// Renders the disc (2x resolution) into an image: texture lookup, clouds, per-pixel light, glow.

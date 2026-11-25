@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     HStack(spacing: 8) {
                         ForEach(Array(PlanetStyle.Kind.allCases.enumerated()).filter { $0.offset / 4 == row }, id: \.offset) { _, k in
                             VStack(spacing: 2) {
-                                PlanetView(engine: self.engine, radius: 40, style: PlanetStyle.sample(k), alwaysOn: true).frame(width: 140, height: 140)
+                                PlanetView(engine: self.engine, radius: 40, style: PlanetStyle.sample(k), alwaysOn: true, enabled: true).frame(width: 140, height: 140)
                                 Text(k.rawValue).font(.system(size: 11, weight: .medium)).foregroundStyle(.white)
                             }
                         }
@@ -107,6 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The popover as a floating panel under the right end of the menu bar.
     func showPanel() {
+        ensurePanel()
+        if LayoutState.shared.compact { showWidget(); return }
+        panel?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func ensurePanel() {
         if panel == nil {
             let p = NSPanel(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView, .utilityWindow], backing: .buffered, defer: false)
             p.titleVisibility = .hidden
@@ -129,27 +136,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async { self?.panel?.orderOut(nil); self?.widget?.orderOut(nil) }
             }
         }
-        if LayoutState.shared.compact { showWidget(); return }
-        panel?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private var widget: NSPanel?
 
+    /// Panel <-> widget: the planet flies between the panel's hero spot and the widget's corner
+    /// (0.35 s, ease in-out) while the other window fades. The widget's saved frame is restored after.
     private func applyLayout() {
+        ensurePanel()
+        guard let panel else { return }
+        let hero = heroFrame(in: panel)
         if LayoutState.shared.compact {
-            panel?.orderOut(nil)
-            showWidget()
+            ensureWidget()
+            guard let w = widget else { return }
+            let target = w.frame
+            w.alphaValue = 0
+            w.setFrame(hero, display: false)
+            w.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.35
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                w.animator().setFrame(target, display: true)
+                w.animator().alphaValue = 1
+                panel.animator().alphaValue = 0
+            }, completionHandler: {
+                panel.orderOut(nil)
+                panel.alphaValue = 1
+            })
         } else {
-            widget?.orderOut(nil)
-            panel?.makeKeyAndOrderFront(nil)
+            guard let w = widget, w.isVisible else {
+                panel.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+            let saved = w.frame
+            panel.alphaValue = 0
+            panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.35
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                w.animator().setFrame(hero, display: true)
+                w.animator().alphaValue = 0
+                panel.animator().alphaValue = 1
+            }, completionHandler: {
+                w.orderOut(nil)
+                w.alphaValue = 1
+                w.setFrame(saved, display: false)            // keep the parked spot
+            })
         }
+    }
+
+    /// The hero (planet + ring, 280 pt) in screen coordinates, from where the ring sits in the panel.
+    private func heroFrame(in panel: NSPanel) -> NSRect {
+        let c = RingSim.shared.ringCenter
+        let contentH = panel.contentView?.frame.height ?? panel.frame.height
+        let cx = panel.frame.minX + (c == .zero ? panel.frame.width / 2 : c.x)
+        let cy = panel.frame.minY + contentH - (c == .zero ? 140 : c.y)
+        return NSRect(x: cx - 140, y: cy - 140, width: 280, height: 280)
     }
 
     /// Just the planet: a borderless, transparent, square window that floats on every Space,
     /// resizable 140-420 pt, dragged anywhere, its frame remembered.
     private func showWidget() {
+        ensureWidget()
+        widget?.orderFrontRegardless()
+    }
+
+    private func ensureWidget() {
         if widget == nil {
             let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
                             styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -171,7 +225,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.setFrameAutosaveName("megabass.widget")
             widget = w
         }
-        widget?.orderFrontRegardless()
     }
 
     func applicationWillTerminate(_ note: Notification) { engine.shutdown() }
