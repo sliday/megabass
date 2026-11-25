@@ -26,6 +26,12 @@ final class RingSim {
     var heat: [Double] = []
     /// Outward kick on the ridge from arriving pulses, per band; springs back in ~150 ms.
     var push: [Double] = []
+    /// Hot metal: temperature per band, built by hard and sustained hits, cooling over ~1.6 s.
+    var temp: [Double] = []
+    private var rawPrior: [Double] = []
+    /// Tiny sparkles from mega hits (silence to full in one step): fast, short-lived streaks.
+    struct Sparkle { var x: Double; var y: Double; var vx: Double; var vy: Double; var life: Double; var age: Double; var size: Double }
+    var sparkles: [Sparkle] = []
 
     /// A bright packet racing up a stalk from the planet to the ridge (vizamp's Pulse + Impact).
     struct Packet { var stalk: Int; var travel: Double; var speed: Double; var energy: Double }
@@ -82,6 +88,8 @@ final class RingSim {
         if levels.count != spectrum.count {
             levels = spectrum; prior = spectrum; heat = Array(repeating: 0, count: spectrum.count)
             push = Array(repeating: 0, count: spectrum.count)
+            temp = Array(repeating: 0, count: spectrum.count)
+            rawPrior = spectrum
         }
         // Ease toward the 30 Hz spectrum so the ridge moves at frame rate.
         // Contrast: the spectrum is auto-gained over 60 dB, so most bands sit mid-scale. Below 30 %
@@ -100,6 +108,7 @@ final class RingSim {
         prior = levels
 
         advancePackets(dt)
+        advanceMetal(dt, raw: spectrum)
         if grains.isEmpty { grains = (0..<260).map { _ in newGrain(rest: true) } }
         advanceGrains(dt)
         radiate(dt)
@@ -133,7 +142,7 @@ final class RingSim {
     }
 
     /// Interpolates a per-band array around the lap, wrapping highest into lowest at the seam.
-    private func sample(_ v: [Double], _ th: Double) -> Double {
+    func sample(_ v: [Double], _ th: Double) -> Double {
         guard v.count > 1 else { return 0 }
         let x = lap(th) * Double(v.count)
         let i = Int(x) % v.count, f = x - Double(Int(x))
@@ -269,6 +278,46 @@ final class RingSim {
             grains[i].glow = 1
         }
     }
+
+    /// Heats the ridge where it's hit hard and long, lets it cool, makes superhot spans shed embers,
+    /// and turns mega hits (a band jumping from near silence to near full) into tiny sparkles.
+    private func advanceMetal(_ dt: Double, raw: [Double]) {
+        guard temp.count == levels.count else { return }
+        for i in temp.indices {
+            let lv = levels[i]
+            temp[i] += (lv * lv * 0.9 + push[i] * 0.5) * dt * 1.0      // steady 80 % ~ yellow-white, 60 % ~ orange
+            temp[i] = min(1.2, temp[i] * exp(-dt / 1.6))
+            // Superhot: embers, more the hotter.
+            if temp[i] > 0.75, rand(0, 1) < (temp[i] - 0.75) * dt * 24,
+               let g = grains.indices.filter({ !grains[$0].air }).randomElement() {
+                let th = angle(ofBand: i) + rand(-0.05, 0.05)
+                grains[g].th = th; grains[g].r = surface(th) + 0.5
+                grains[g].vr = rand(55, 120); grains[g].vt = rand(-10, 10)
+                grains[g].air = true; grains[g].spark = rand(0.2, 0.35); grains[g].glow = 1; grains[g].drawn = false
+            }
+            // Mega hit: silence to full in one step.
+            let target = i < raw.count ? pow(max(0, (raw[i] - 0.3) / 0.7), 1.35) : 0
+            if i < rawPrior.count, rawPrior[i] < 0.25, target - rawPrior[i] > 0.6 {
+                let th = angle(ofBand: i), r0 = surface(th)
+                for _ in 0..<18 {
+                    let a = th + rand(-0.9, 0.9), sp = rand(80, 220)
+                    sparkles.append(Sparkle(x: cos(th) * r0, y: sin(th) * r0, vx: cos(a) * sp, vy: sin(a) * sp,
+                                            life: rand(0.15, 0.35), age: 0, size: rand(0.5, 1.0)))
+                }
+                temp[i] = min(1.2, temp[i] + 0.25)
+            }
+        }
+        rawPrior = raw.map { pow(max(0, ($0 - 0.3) / 0.7), 1.35) }
+        for k in sparkles.indices {
+            sparkles[k].age += dt
+            sparkles[k].x += sparkles[k].vx * dt; sparkles[k].y += sparkles[k].vy * dt
+            sparkles[k].vx *= exp(-dt * 3); sparkles[k].vy *= exp(-dt * 3)
+        }
+        sparkles.removeAll { $0.age > $0.life }
+        if sparkles.count > 300 { sparkles.removeFirst(sparkles.count - 300) }
+    }
+
+    func temperature(at th: Double) -> Double { sample(temp, th) }
 
     /// Extra-fast sparks put into orbit above the ridge: 0.95-1.05 x circular speed (bound but
     /// elliptical), random direction, tiny drag; they circle and spiral down over several seconds.
@@ -431,6 +480,15 @@ struct RingVisualizer: View {
         .accessibilityHidden(true)
     }
 
+    /// Metal glow by temperature: cherry, red, orange, yellow, white.
+    static func blackbody(_ t: Double) -> Color {
+        let stops: [(Double, Double, Double)] = [(0.35, 0.05, 0.04), (0.8, 0.12, 0.04), (1, 0.45, 0.08), (1, 0.85, 0.35), (1, 0.98, 0.92)]
+        let x = max(0, min(1, t)) * Double(stops.count - 1)
+        let i = min(stops.count - 2, Int(x)), f = x - Double(i)
+        let a = stops[i], b = stops[i + 1]
+        return Color(red: a.0 + (b.0 - a.0) * f, green: a.1 + (b.1 - a.1) * f, blue: a.2 + (b.2 - a.2) * f)
+    }
+
     private func pt(_ c: CGPoint, _ th: Double, _ r: Double) -> CGPoint {
         CGPoint(x: c.x + cos(th) * r, y: c.y + sin(th) * r)
     }
@@ -514,13 +572,29 @@ struct RingVisualizer: View {
         sim.ghosts.append(ridge)
         if sim.ghosts.count > 4 { sim.ghosts.removeFirst() }
 
-        // The ridge line, each segment in its band's heat colour.
+        // The ridge as hot metal: thickness and colour follow each span's temperature (blackbody:
+        // cherry, red, orange, yellow, white), and it keeps glowing a moment after the hit.
+        var bloom = ctx
+        bloom.blendMode = .plusLighter
         for j in 1..<ridge.count {
             let th = (angles[j - 1] + angles[j]) / 2
-            let lv = sim.level(at: th), h = sim.heat(at: th)
+            let lv = sim.level(at: th), tmp = sim.temperature(at: th)
             var seg = Path(); seg.move(to: ridge[j - 1]); seg.addLine(to: ridge[j])
-            let alpha = floorFade(lv) * (0.55 + 0.45 * min(1, h / 0.65))
-            ctx.stroke(seg, with: .color(Heat.color(0.25 + h * 0.9).opacity(alpha)), style: StrokeStyle(lineWidth: 1.6 + h * 1.4, lineCap: .round))
+            let alpha = max(floorFade(lv) * 0.6, min(1, tmp * 1.3))
+            let col = Self.blackbody(tmp)
+            if tmp > 0.35 {
+                bloom.stroke(seg, with: .color(col.opacity(0.22 * min(1, tmp))), style: StrokeStyle(lineWidth: (1.4 + tmp * 4.6) * 3, lineCap: .round))
+            }
+            ctx.stroke(seg, with: .color(col.opacity(alpha)), style: StrokeStyle(lineWidth: 1.4 + tmp * 4.6, lineCap: .round))
+        }
+        // Tiny sparkles from mega hits: white-hot streaks.
+        for s in sim.sparkles {
+            let f = 1 - s.age / s.life
+            let head = CGPoint(x: c.x + s.x, y: c.y + s.y)
+            let tail = CGPoint(x: head.x - s.vx * 0.025, y: head.y - s.vy * 0.025)
+            var p = Path(); p.move(to: tail); p.addLine(to: head)
+            bloom.stroke(p, with: .linearGradient(Gradient(colors: [Color.white.opacity(0), Color(red: 1, green: 0.95, blue: 0.8).opacity(f)]), startPoint: tail, endPoint: head),
+                         style: StrokeStyle(lineWidth: s.size, lineCap: .round))
         }
 
         // Grains and sparks, drawn as short streaks along their motion.
