@@ -13,13 +13,32 @@ final class PlanetTexture: @unchecked Sendable {
     static let W = 768, H = 384
     let surface: [SIMD3<Float>]      // albedo
     let clouds: [Float]              // cloud cover 0...1 (drifts faster than the ground)
-    let glow: [SIMD3<Float>]         // emissive light (lava, radiation), not shaded by the night side
+    let glow: [SIMD3<Float>]         // emissive light (lava, radiation, star seams, city lights)
     let hasGlow: Bool
+    let height: [Float]              // relief for bump lighting
+    let spec: [Float]                // specular strength (water and ice shine, rock doesn't)
+    let kind: PlanetStyle.Kind
 
     // MARK: Noise
 
-    private init(surface: [SIMD3<Float>], clouds: [Float], glow: [SIMD3<Float>], hasGlow: Bool) {
+    private init(surface: [SIMD3<Float>], clouds: [Float], glow: [SIMD3<Float>], hasGlow: Bool, height: [Float], spec: [Float], kind: PlanetStyle.Kind) {
         self.surface = surface; self.clouds = clouds; self.glow = glow; self.hasGlow = hasGlow
+        self.height = height; self.spec = spec; self.kind = kind
+    }
+
+    /// Cellular (Worley) noise on the sphere: distances to the nearest and second-nearest feature
+    /// points. F2 - F1 is small along the seams between cells: the plates of a star.
+    private static func worley(_ perm: Perm, _ p: SIMD3<Float>, freq: Float) -> (Float, Float) {
+        let q = p * freq
+        let cx = Int(floor(q.x)), cy = Int(floor(q.y)), cz = Int(floor(q.z))
+        var f1: Float = 9, f2: Float = 9
+        for dz in -1...1 { for dy in -1...1 { for dx in -1...1 {
+            let x = cx + dx, y = cy + dy, z = cz + dz
+            let jitter = SIMD3<Float>(lattice(perm, x, y, z), lattice(perm, x + 31, y + 17, z + 5), lattice(perm, x + 7, y + 43, z + 29))
+            let d = simd_length(SIMD3<Float>(Float(x), Float(y), Float(z)) + jitter - q)
+            if d < f1 { f2 = f1; f1 = d } else if d < f2 { f2 = d }
+        }}}
+        return (f1, f2)
     }
 
     private static func makePerm(_ seed: UInt64) -> [Int] {
@@ -71,6 +90,7 @@ final class PlanetTexture: @unchecked Sendable {
     // MARK: Bake
 
     typealias RGB = SIMD3<Float>
+    static func hexF(_ v: UInt32) -> RGB { RGB(Float(v >> 16 & 0xFF) / 255, Float(v >> 8 & 0xFF) / 255, Float(v & 0xFF) / 255) }
 
     static func bake(style st: PlanetStyle, hot: RGB, heat: RGB) -> PlanetTexture {
         let permArray = makePerm(PlanetStyle.fnv1a(st.key)).map { Int32($0) }
@@ -82,7 +102,10 @@ final class PlanetTexture: @unchecked Sendable {
         var surface = [RGB](repeating: .zero, count: W * H)
         var clouds = [Float](repeating: 0, count: W * H)
         var glow = [RGB](repeating: .zero, count: W * H)
-        let hasGlow = st.kind == .inferno || st.kind == .radiated
+        var height = [Float](repeating: 0, count: W * H)
+        var spec = [Float](repeating: 0, count: W * H)
+        let hasGlow = [PlanetStyle.Kind.inferno, .radiated, .star, .terran, .jungle, .ocean].contains(st.kind)
+        let starTint: RGB = [hexF(0xFF5A3A), hexF(0xFF9A3A), hexF(0xFFD86A), hexF(0xFFF4D6), hexF(0xBFD8FF)][st.starClass]
         func hex(_ v: UInt32) -> RGB { RGB(Float(v >> 16 & 0xFF) / 255, Float(v >> 8 & 0xFF) / 255, Float(v & 0xFF) / 255) }
         func mix(_ a: RGB, _ b: RGB, _ t: Float) -> RGB { a + (b - a) * max(0, min(1, t)) }
         func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = max(0, min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
@@ -109,13 +132,19 @@ final class PlanetTexture: @unchecked Sendable {
                 let absLat = abs(lat) / (.pi / 2)
                 var col: RGB
                 var emit = RGB.zero
+                var relief = h + ridge * 0.25 + (fine - 0.5) * 0.15
+                var shine: Float = 0.06
                 switch st.kind {
                 case .terran, .ocean, .jungle:
                     let sea: Float = st.kind == .ocean ? 0.6 : (st.kind == .jungle ? 0.4 : 0.5)
                     if h < sea {
                         col = mix(hex(0x0B2A5B), hex(0x2F7FB8), smooth(sea - 0.18, sea, h))            // deep to shallow
                         col = mix(col, hex(0x6FC3D8), smooth(sea - 0.012, sea, h) * 0.6)                // surf line
+                        relief = sea; shine = 1                                                           // flat, glossy water
                     } else {
+                        // City lights on land, seen only on the night side.
+                        let city = smooth(0.66, 0.74, fbm(perm, p, octaves: 2, freq: 28)) * smooth(sea + 0.02, sea + 0.1, h) * (1 - smooth(0.75, 0.85, (h - sea) / (1 - sea)))
+                        emit = RGB(1, 0.78, 0.42) * city * 0.9
                         let up = (h - sea) / (1 - sea)
                         let low = st.kind == .jungle ? hex(0x1F5A1F) : hex(0x3E7A35)
                         col = mix(low, st.kind == .jungle ? hex(0x2E7A2A) : hex(0x8C7A4A), smooth(0.05, 0.45, up + (fine - 0.5) * 0.3))
@@ -132,6 +161,7 @@ final class PlanetTexture: @unchecked Sendable {
                     col = mix(hex(0x5E6E76), hex(0xA9BAC2), smooth(0.3, 0.7, h + (fine - 0.5) * 0.2))
                     col = mix(col, hex(0xF0F5F8), smooth(0.55, 0.7, h * 0.5 + absLat * 0.8 + (fine - 0.5) * 0.15))
                 case .ice:
+                    shine = 0.6
                     col = mix(hex(0xB8D6EC), hex(0xF2F8FC), smooth(0.25, 0.8, h + (fine - 0.5) * 0.2))
                     col = mix(col, hex(0x5E95C4), smooth(0.86, 0.97, ridge) * 0.8)                     // fractures
                 case .barren:
@@ -147,6 +177,16 @@ final class PlanetTexture: @unchecked Sendable {
                     col = mix(hex(0x150A08), hex(0x3A1F18), smooth(0.2, 0.8, h * 0.6 + fine * 0.4))
                     let lava = smooth(0.7, 0.88, ridge) + smooth(0.66, 0.8, h) * 0.7
                     emit = mix(hex(0xFF3A0E), hex(0xFFD27A), smooth(0.88, 0.98, ridge)) * min(1.6, lava * 1.4)
+                case .star:
+                    // Plates of cooler crust; the seams between them blaze with light from the core.
+                    let (f1, f2) = worley(perm, q, freq: 5.5)
+                    let seam = 1 - smooth(0.0, 0.09, f2 - f1)
+                    let (g1, g2) = worley(perm, p, freq: 17)
+                    let small = 1 - smooth(0.0, 0.07, g2 - g1)
+                    col = starTint * (0.35 + 0.35 * h + 0.2 * (1 - f1))
+                    emit = mix(starTint, RGB(1, 1, 0.95), 0.6) * (seam * 1.4 + small * 0.45)
+                    relief = 0.5 + (1 - seam) * 0.25 + (1 - f1) * 0.15
+                    shine = 0
                 case .gasGiant:
                     // Turbulent bands: latitude bent by the domain warp and the height field.
                     let latW = lat + warp.z * 0.45 + (h - 0.5) * Float(st.wave) * 6
@@ -162,18 +202,21 @@ final class PlanetTexture: @unchecked Sendable {
                         col = col * (1 - 0.4 * bowl) + RGB(repeating: 0.25) * rim
                     }
                 }
-                if st.kind != .gasGiant { col = mix(col, hot, tint) }                         // a hint of the station palette
+                if st.kind != .gasGiant && st.kind != .star { col = mix(col, hot, tint) }     // a hint of the station palette
+                if st.kind == .gasGiant { shine = 0.15 }
                 col = col * (0.88 + 0.24 * fine)                                                // fine grain
                 let i = y * W + x
                 surface[i] = col
                 glow[i] = emit
+                height[i] = relief
+                spec[i] = shine
                 if st.kind == .terran || st.kind == .ocean || st.kind == .jungle || st.kind == .tundra || st.kind == .toxic {
                     let cl = fbm(perm, p * 1.3 + warp * 1.2 + 11, octaves: 4, freq: 2.6)
                     clouds[i] = smooth(st.kind == .toxic ? 0.45 : 0.55, 0.75, cl) * (st.kind == .toxic ? 0.6 : 0.85)
                 }
             }
         }
-        return PlanetTexture(surface: surface, clouds: clouds, glow: glow, hasGlow: hasGlow)
+        return PlanetTexture(surface: surface, clouds: clouds, glow: glow, hasGlow: hasGlow, height: height, spec: spec, kind: st.kind)
     }
 }
 
@@ -188,6 +231,7 @@ final class PlanetTextures {
     // Per-pixel sphere mapping for the current disc size and tilt.
     private var mapKey = ""
     private var latIdx: [Int32] = [], lonBase: [Float] = [], light: [Float] = [], inside: [Bool] = []
+    private var normal: [SIMD3<Float>] = [], east: [SIMD3<Float>] = [], north: [SIMD3<Float>] = [], cosLat: [Float] = []
     private var pixels: [UInt32] = []
     private var side = 0
 
@@ -222,25 +266,72 @@ final class PlanetTextures {
     }
 
     /// Renders the disc (2x resolution) into an image: texture lookup, clouds, per-pixel light, glow.
-    func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool) -> CGImage? {
+    /// `rim`: atmosphere colour at the limb. `grade`: the palette pair the surface is toned toward.
+    func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
+                rim rimColor: Color = .white, grade: (Color, Color)? = nil) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let key = "\(n)|\(tilt)"
         if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
         let W = PlanetTexture.W
-        let shift = Float(spin / (2 * .pi)) * Float(W)
-        let cloudShift = Float(spin * 1.25 / (2 * .pi)) * Float(W)
+        // Minus spin: the surface turns rightward, the same way as the power icon.
+        let shift = -Float(spin / (2 * .pi)) * Float(W)
+        let cloudShift = -Float(spin * 1.25 / (2 * .pi)) * Float(W)
+        let H = PlanetTexture.H
+        let L = simd_normalize(SIMD3<Float>(-0.45, -0.5, 0.74)), V = SIMD3<Float>(0, 0, 1)
+        let half = simd_normalize(L + V)
+        let rimTint = Self.rgb(rimColor)
+        let star = tex.kind == .star
+        // Colour grade: split-tone shadows toward the darkened first palette colour, highlights
+        // toward the second, keeping luminance, so the planet sits inside the station's theme.
+        let gradeLo = grade.map { Self.rgb($0.0) * 0.55 }, gradeHi = grade.map { Self.rgb($0.1) }
         for i in 0..<(n * n) {
             guard inside[i] else { pixels[i] = 0; continue }
             let u0 = lonBase[i]
             var u = Int(u0 + shift) % W; if u < 0 { u += W }
             var uc = Int(u0 + cloudShift) % W; if uc < 0 { uc += W }
-            let row = Int(latIdx[i]) * W
+            let v = Int(latIdx[i])
+            let row = v * W
             var c = tex.surface[row + u]
             let cl = tex.clouds[row + uc]
             c = c + (SIMD3<Float>(repeating: 0.97) - c) * cl
-            let l = light[i]
-            var out = c * l
-            if tex.hasGlow { out += tex.glow[row + u] * (0.55 + 0.45 * (1 - l)) }
+            var out: SIMD3<Float>
+            var emitted = SIMD3<Float>.zero
+            let nrm = normal[i]
+            if star {
+                // A star lights itself: limb-darkened crust plus blazing seams.
+                out = c * (0.55 + 0.45 * nrm.z)
+                emitted = tex.glow[row + u] * 1.3
+            } else {
+                // Bump: tilt the normal by the height slope (east/west and north/south neighbours).
+                let ue = (u + 1) % W, uw = (u + W - 1) % W
+                let vn = max(0, v - 1), vs = min(H - 1, v + 1)
+                let sx = (tex.height[row + ue] - tex.height[row + uw]) * 7 / max(0.25, cosLat[i])
+                let sy = (tex.height[vn * W + u] - tex.height[vs * W + u]) * 7
+                let bumped = simd_normalize(nrm - (east[i] * sx + north[i] * sy) * (1 - cl))
+                // Toy-like light: wrapped diffuse so the night side isn't pitch black.
+                let lam = max(0, (simd_dot(bumped, L) + 0.2) / 1.2)
+                out = c * (0.08 + 0.95 * pow(lam, 0.9))
+                // Specular: glossy water and ice catch the sun; rock stays matte.
+                let gloss = tex.spec[row + u] * (1 - cl)
+                if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss) }
+                // Emissive: lava and radiation glow everywhere; city lights only at night.
+                if tex.hasGlow {
+                    let g = tex.glow[row + u]
+                    let night = tex.kind == .terran || tex.kind == .jungle || tex.kind == .ocean
+                    emitted = g * (night ? pow(max(0, 1 - lam * 1.6), 2) * (1 - cl) : 0.55 + 0.45 * (1 - lam))
+                }
+                // Rim: a thin band of atmosphere colour at the limb, brighter on the lit side.
+                out += rimTint * (pow(1 - nrm.z, 3) * (0.35 + 0.65 * lam) * 0.55)
+            }
+            if let lo = gradeLo, let hi = gradeHi {
+                let lum = simd_dot(out, SIMD3<Float>(0.299, 0.587, 0.114))
+                let tone = lo + (hi - lo) * min(1, lum * 1.3)
+                let toned = tone * (lum / max(0.05, simd_dot(tone, SIMD3<Float>(0.299, 0.587, 0.114))))
+                out = out + (toned - out) * 0.45
+                let glum = simd_dot(emitted, SIMD3<Float>(0.299, 0.587, 0.114))
+                emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
+            }
+            out += emitted
             if !on {
                 let g = (out.x + out.y + out.z) / 3 * 0.45
                 out = SIMD3(repeating: g)
@@ -260,6 +351,8 @@ final class PlanetTextures {
         side = n
         latIdx = .init(repeating: 0, count: n * n); lonBase = .init(repeating: 0, count: n * n)
         light = .init(repeating: 0, count: n * n); inside = .init(repeating: false, count: n * n)
+        normal = .init(repeating: .zero, count: n * n); east = .init(repeating: .zero, count: n * n)
+        north = .init(repeating: .zero, count: n * n); cosLat = .init(repeating: 1, count: n * n)
         pixels = .init(repeating: 0, count: n * n)
         let L = simd_normalize(SIMD3<Float>(-0.45, -0.5, 0.74))          // light from top-left, toward the viewer
         let ct = Float(cos(-tilt)), stl = Float(sin(-tilt))
@@ -279,6 +372,13 @@ final class PlanetTextures {
                 lonBase[i] = (lon / (2 * .pi) + 1) * Float(PlanetTexture.W)
                 let lam = max(0, simd_dot(SIMD3(nx, ny, z), L))
                 light[i] = 0.1 + 0.95 * pow(lam, 0.8)
+                // Surface frame in view space: normal, east (+longitude), north (+latitude).
+                normal[i] = SIMD3(nx, ny, z)
+                let sl = sin(lon), cl = cos(lon), sa = sin(lat), ca = cos(lat)
+                let eP = SIMD3<Float>(cl, 0, -sl), nP = SIMD3<Float>(-sa * sl, -ca, -sa * cl)
+                func back(_ v: SIMD3<Float>) -> SIMD3<Float> { SIMD3(v.x * ct + v.y * stl, -v.x * stl + v.y * ct, v.z) }
+                east[i] = back(eP); north[i] = back(nP)
+                cosLat[i] = ca
             }
         }
     }

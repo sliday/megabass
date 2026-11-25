@@ -82,8 +82,31 @@ struct PlanetView: View {
         if st.rings { drawRings(ctx, c: c, R: R, front: false, color: heat, on: on, st: st) }
         drawMoons(ctx, c: c, R: R, front: false, color: heat, on: on, st: st)
 
+        // Stars: light rays radiating from the core, slowly turning, longer with the bass, in a corona.
+        if st.kind == .star {
+            let tintStar = [0xFF5A3A, 0xFF9A3A, 0xFFD86A, 0xFFF4D6, 0xBFD8FF].map { Palettes.hex(UInt32($0)) }[st.starClass]
+            var rays = ctx
+            rays.blendMode = .plusLighter
+            let bass = on ? OrbitSim.shared.groups[0] : 0.2
+            let corona = R * 1.9
+            rays.fill(Path(ellipseIn: CGRect(x: c.x - corona, y: c.y - corona, width: corona * 2, height: corona * 2)),
+                      with: .radialGradient(Gradient(colors: [tintStar.opacity(0.5), tintStar.opacity(0.12), tintStar.opacity(0)]), center: c, startRadius: R * 0.9, endRadius: corona))
+            let count = 18
+            for k in 0..<count {
+                let a = Double(k) / Double(count) * 2 * .pi + t * 0.05 + sin(Double(k) * 7.3) * 0.12
+                let len = R * (1.3 + 0.35 * sin(t * 1.1 + Double(k) * 2.4) + bass * 0.7)
+                let w = 0.09 + 0.04 * sin(Double(k) * 3.1)
+                var ray = Path()
+                ray.move(to: CGPoint(x: c.x + cos(a - w) * R * 0.85, y: c.y + sin(a - w) * R * 0.85))
+                ray.addLine(to: CGPoint(x: c.x + cos(a) * len, y: c.y + sin(a) * len))
+                ray.addLine(to: CGPoint(x: c.x + cos(a + w) * R * 0.85, y: c.y + sin(a + w) * R * 0.85))
+                ray.closeSubpath()
+                rays.fill(ray, with: .radialGradient(Gradient(colors: [tintStar.opacity(on ? 0.55 : 0.2), tintStar.opacity(0)]), center: c, startRadius: R * 0.85, endRadius: len))
+            }
+        }
+
         // Thin atmosphere: a tight bright shell on the limb plus two faint outer layers.
-        if on {
+        if on && st.kind != .star {
             let r2 = R * 1.1
             let shell = Gradient(stops: [
                 .init(color: heat.opacity(0), location: 0.96 / 1.1),
@@ -115,7 +138,8 @@ struct PlanetView: View {
         // Crisp fractal surface (see PlanetTexture); the vector look below is the fallback while it bakes.
         let textured: Bool
         if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
-           let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on) {
+           let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
+                                                  rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat)) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -139,7 +163,7 @@ struct PlanetView: View {
                 let steps = 28
                 for s in 0...steps {
                     let x = -R + Double(s) / Double(steps) * 2 * R
-                    let lon = asin(max(-1, min(1, x / ring))) + spin * (1 + 0.04 * Double(i))
+                    let lon = asin(max(-1, min(1, x / ring))) - spin * (1 + 0.04 * Double(i))   // turns with the icon
                     let y = y0 + sin(lon * 3 + Double(i) * 1.7) * R * st.wave + sin(lon * st.detail - Double(i)) * R * st.wave * 0.35
                     if s == 0 { p.move(to: CGPoint(x: c.x + x, y: c.y + y)) } else { p.addLine(to: CGPoint(x: c.x + x, y: c.y + y)) }
                 }
@@ -303,6 +327,7 @@ struct PlanetView: View {
         case .radiated: return (h(0x3A3F1E), h(0x4E5527), h(0x2E3216), h(0xD8F27A), h(0xC6FF3A))
         case .toxic:    return (h(0x6D7A1E), h(0xB8C23A), h(0x8C9A2A), h(0xE2E86A), nil)
         case .inferno:  return (h(0x2A1512), h(0x3F1D16), h(0x1C0E0C), h(0x5A3A30), h(0xFF6A1A))
+        case .star:     return (h(0xFFB347), h(0xFF8A2A), h(0xFFD27A), h(0xFFF0C0), h(0xFFF4D6))
         }
     }
 
@@ -384,17 +409,19 @@ struct PlanetView: View {
                     let ra = m.springy ? a.radius : m.radius, rb = m.springy ? b.radius : m.radius
                     seg.move(to: CGPoint(x: cos(a.angle) * ra, y: sin(a.angle) * ra * 0.24))
                     seg.addLine(to: CGPoint(x: cos(b.angle) * rb, y: sin(b.angle) * rb * 0.24))
-                    g.stroke(seg, with: .color(color.opacity(0.55 * (1 - age / 0.9))), style: StrokeStyle(lineWidth: m.size * 0.7 * (1 - age / 0.9) + 0.3, lineCap: .round))
+                    g.stroke(seg, with: .color(mix(color, .white, orbit.speed * 0.5).opacity(min(1, (0.45 + orbit.speed * 0.5) * (1 - age / 0.9)))), style: StrokeStyle(lineWidth: m.size * 0.7 * (1 - age / 0.9) + 0.3, lineCap: .round))
                 }
             }
             guard (sin(m.angle) >= 0) == front else { continue }
             let p = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * 0.24)
-            let glow = on ? m.glow : 0.15
-            let d = m.size * 2
+            // Faster moons shine brighter: whiter core, bigger, stronger halo.
+            let fast = on ? orbit.speed : 0
+            let glow = on ? m.glow + fast * 0.9 : 0.15
+            let d = m.size * (2 + fast * 1.6)
             g.fill(Path(ellipseIn: CGRect(x: p.x - d, y: p.y - d, width: d * 2, height: d * 2)),
-                   with: .radialGradient(Gradient(colors: [color.opacity(0.35 * glow), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
+                   with: .radialGradient(Gradient(colors: [color.opacity(min(1, 0.35 * glow)), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
             g.fill(Path(ellipseIn: CGRect(x: p.x - m.size, y: p.y - m.size, width: m.size * 2, height: m.size * 2)),
-                   with: .radialGradient(Gradient(colors: [.white, mix(color, .white, 0.3), mix(color, .black, 0.5)]),
+                   with: .radialGradient(Gradient(colors: [.white, mix(color, .white, 0.3 + fast * 0.5), mix(color, .black, 0.5 - fast * 0.35)]),
                                          center: CGPoint(x: p.x - m.size * 0.4, y: p.y - m.size * 0.4), startRadius: 0, endRadius: m.size * 1.6))
         }
         // Shock rings from the kick moon: 0 to 10 pt over 200 ms, fading.
@@ -443,6 +470,9 @@ final class OrbitSim {
     var moonAngle = 0.4, innerAngle = 1.0, outerAngle = 3.0
     var spring = 0.0, flash = 0.0
     var energy = 0.0
+    /// Orbital pace (rad/s) and how fast that is, 0 drifting ... 1 flat out: faster moons shine brighter.
+    var pace = 0.4
+    var speed: Double { max(0, min(1, (pace - 0.4) / 2.2)) }
     var shocks: [(at: Double, x: Double, y: Double)] = []
     var wakes: [Wake] = []
     private var springV = 0.0, lastKick = 0.0, prior = [Double](repeating: 0, count: 6)
@@ -464,7 +494,7 @@ final class OrbitSim {
         // trail stretches on its own.
         let loud = groups.reduce(0, +) / Double(groups.count)
         energy += (loud - energy) * min(1, dt / 1.5)
-        let pace = 0.4 + energy * 2.2
+        pace = 0.4 + energy * 2.2
         moonAngle += dt * pace
         innerAngle += dt * pace * 1.5          // inner orbits run faster (Kepler)
         outerAngle += dt * pace * 0.9

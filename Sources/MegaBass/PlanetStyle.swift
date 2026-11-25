@@ -10,7 +10,7 @@ struct PlanetStyle: Equatable {
 
     /// Planet classes in the spirit of 4X space games (Master of Orion and friends).
     enum Kind: String, CaseIterable {
-        case gasGiant = "gas giant", terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno
+        case gasGiant = "gas giant", terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno, star
     }
 
     let key: String
@@ -31,6 +31,7 @@ struct PlanetStyle: Equatable {
     let ringTilt: Double        // radians
     let ringWidth: Double       // fraction of radius
     let atmosphere: Double      // atmosphere strength multiplier
+    let starClass: Int          // stars only: 0 red dwarf, 1 orange, 2 yellow, 3 white, 4 blue-white
 
     static func fnv1a(_ s: String) -> UInt64 {
         var h: UInt64 = 0xcbf2_9ce4_8422_2325
@@ -84,11 +85,14 @@ struct PlanetStyle: Equatable {
         case .radiated: craters = blobs(10, 0.04, 0.12); cracks = (0..<7).map { _ in crack(&r) }; atmosphere *= 0.5
         case .toxic:    clouds = blobs(20, 0.15, 0.4); atmosphere *= 1.6
         case .inferno:  craters = blobs(6, 0.05, 0.12); cracks = (0..<9).map { _ in crack(&r) }; atmosphere *= 0.8
+        case .star:     atmosphere = 1.6
         }
+        let starClass = Int(r.unit() * 5)
         let code = "PL-" + String(format: "%08X", UInt32(truncatingIfNeeded: h >> 32))
         return PlanetStyle(key: key, code: code, kind: kind, blobs: land, clouds: clouds, craters: craters,
                            cracks: cracks, caps: caps, bands: bands, wave: wave, detail: detail, tilt: tilt, spin: spin,
-                           storms: storms, rings: rings, ringTilt: ringTilt, ringWidth: ringWidth, atmosphere: atmosphere)
+                           storms: storms, rings: kind == .star ? false : rings, ringTilt: ringTilt, ringWidth: ringWidth,
+                           atmosphere: atmosphere, starClass: starClass)
     }
 
     /// A wandering line on the sphere (lava, radiation, ice fractures).
@@ -112,7 +116,8 @@ struct PlanetStyle: Equatable {
     /// The full recipe, readable: what the hash decided.
     var definition: String {
         let deg = { (r: Double) in String(format: "%+.0f°", r * 180 / .pi) }
-        var parts = [kind.rawValue, "\(bands) bands", String(format: "wave %.2f", wave), "tilt " + deg(tilt),
+        let name = kind == .star ? ["red dwarf", "orange", "yellow", "white", "blue-white"][starClass] + " star" : kind.rawValue
+        var parts = [name, "\(bands) bands", String(format: "wave %.2f", wave), "tilt " + deg(tilt),
                      String(format: "spin %.2f rad/s", spin), "\(storms.count) storm\(storms.count == 1 ? "" : "s")"]
         if rings { parts.append("rings " + deg(ringTilt)) }
         parts.append(String(format: "atmosphere %.1f×", atmosphere))
