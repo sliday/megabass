@@ -294,7 +294,8 @@ final class PlanetTextures {
     /// `rim`: atmosphere colour at the limb. `grade`: the palette pair the surface is toned toward.
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
-                flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false) -> CGImage? {
+                flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
+                sun: Float = 1) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let key = "\(n)|\(tilt)"
         if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
@@ -346,7 +347,7 @@ final class PlanetTextures {
                 let bumped = simd_normalize(nrm - (east[i] * sx + north[i] * sy) * (1 - cl))
                 // Toy-like light: wrapped diffuse so the night side isn't pitch black.
                 let lam = max(0, (simd_dot(bumped, L) + 0.2) / 1.2)
-                out = c * (0.08 + 0.95 * pow(lam, 0.9))
+                out = c * (0.08 + 0.95 * pow(lam, 0.9) * sun)
                 // Flare light: grazing light from each flare makes the bumps pop where it lands.
                 for fl in lights {
                     let d = fl.pos - nrm
@@ -356,7 +357,7 @@ final class PlanetTextures {
                 }
                 // Specular: glossy water and ice catch the sun; rock stays matte.
                 let gloss = tex.spec[row + u] * (1 - cl)
-                if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss) }
+                if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss * sun) }
                 // Emissive: lava and radiation glow everywhere; city lights only at night.
                 if tex.hasGlow {
                     let g = tex.glow[row + u]
@@ -364,7 +365,7 @@ final class PlanetTextures {
                     emitted = g * (night ? pow(max(0, 1 - lam * 1.6), 2) * (1 - cl) : 0.55 + 0.45 * (1 - lam))
                 }
                 // Rim: a thin band of atmosphere colour at the limb, brighter on the lit side.
-                out += rimTint * (pow(1 - nrm.z, 3) * (0.35 + 0.65 * lam) * 0.55)
+                out += rimTint * (pow(1 - nrm.z, 3) * (0.35 + 0.65 * lam) * 0.55 * (0.4 + 0.6 * sun))
             }
             if let lo = gradeLo, let hi = gradeHi {
                 let lum = simd_dot(out, SIMD3<Float>(0.299, 0.587, 0.114))

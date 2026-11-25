@@ -53,6 +53,14 @@ struct PlanetView: View {
                      blue: x.blueComponent + (y.blueComponent - x.blueComponent) * t)
     }
 
+    /// Overall loudness as sunlight: quiet passages dim the planet, loud ones bring full day.
+    private func sunlight(on: Bool) -> Double {
+        guard on, !alwaysOn else { return 1 }
+        let e = OrbitSim.shared.energy
+        let t = max(0, min(1, (e - 0.03) / 0.32))
+        return 0.25 + 0.75 * t * t * (3 - 2 * t)
+    }
+
     /// One frame: advance the orbits once, then draw the planet, cross-fading from the previous
     /// style for 1.2 s when the station or song changes.
     private func draw(_ ctx: GraphicsContext, size: CGSize, t: Double) {
@@ -110,7 +118,7 @@ struct PlanetView: View {
             let r2 = R * 1.1
             let shell = Gradient(stops: [
                 .init(color: heat.opacity(0), location: 0.96 / 1.1),
-                .init(color: heat.opacity(min(1, (0.42 + 0.3 * kick) * atm)), location: 1.0 / 1.1),
+                .init(color: heat.opacity(min(1, (0.42 + 0.3 * kick) * atm * (0.45 + 0.55 * sunlight(on: on)))), location: 1.0 / 1.1),
                 .init(color: hot.opacity(min(1, (0.1 + 0.15 * kick) * atm)), location: 1.04 / 1.1),
                 .init(color: hot.opacity(0), location: 1),
             ])
@@ -141,7 +149,7 @@ struct PlanetView: View {
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
                                                   rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
                                                   flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35),
-                                                  icon: true) {
+                                                  icon: true, sun: Float(sunlight(on: on))) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))

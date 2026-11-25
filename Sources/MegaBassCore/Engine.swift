@@ -24,6 +24,9 @@ public final class Engine: ObservableObject {
     @Published public private(set) var level: Double = 0
     @Published public private(set) var bassLevel: Double = 0
     @Published public private(set) var note = ""
+    /// What the motor is doing: frequency (Hz) and pulses per second, for the haptics view.
+    @Published public private(set) var hapticHz: Double = 0
+    @Published public private(set) var hapticRate = 0
     @Published public private(set) var kickPulse: Double = 0
     @Published public private(set) var history: [Double] = Array(repeating: 0, count: 32)
     /// 40 log-spaced bands, 20 Hz to 4 kHz, 0...1: what the Mac is playing, drawn as the Frequencies track.
@@ -206,7 +209,7 @@ public final class Engine: ObservableObject {
     private func stopMeters() {
         meterTimer?.invalidate()
         meterTimer = nil
-        level = 0; bassLevel = 0; note = ""; kickPulse = 0
+        level = 0; bassLevel = 0; note = ""; kickPulse = 0; hapticHz = 0; hapticRate = 0
         history = Array(repeating: 0, count: history.count)
         spectrum = Array(repeating: 0, count: spectrum.count)
     }
@@ -215,7 +218,9 @@ public final class Engine: ObservableObject {
         guard let voice else { return }
         let s = voice.status
         let f = pipeline.lastFrame
-        level = Double(s.level)
+        level = level * 0.5 + Double(s.level) * 0.5
+        hapticHz = s.level > 0.02 ? s.hz : 0
+        hapticRate = s.actuationsPerSecond
         bassLevel = bassLevel * 0.6 + Double(max(f.sub, f.bass)) * 0.4
         note = s.noteName
         let sinceKick = Clock.now() - s.kickAt

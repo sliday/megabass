@@ -115,9 +115,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 p.setFrameTopLeftPoint(NSPoint(x: v.maxX - p.frame.width - 12, y: v.maxY - 8))
             }
             panel = p
+            LayoutState.shared.onChange = { [weak self] in
+                DispatchQueue.main.async { self?.applyLayout() }
+            }
+            LayoutState.shared.hideAll = { [weak self] in
+                DispatchQueue.main.async { self?.panel?.orderOut(nil); self?.widget?.orderOut(nil) }
+            }
         }
+        if LayoutState.shared.compact { showWidget(); return }
         panel?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var widget: NSPanel?
+
+    private func applyLayout() {
+        if LayoutState.shared.compact {
+            panel?.orderOut(nil)
+            showWidget()
+        } else {
+            widget?.orderOut(nil)
+            panel?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Just the planet: a borderless, transparent, square window that floats on every Space,
+    /// resizable 140-420 pt, dragged anywhere, its frame remembered.
+    private func showWidget() {
+        if widget == nil {
+            let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                            styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.hasShadow = false
+            w.level = .floating
+            w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            w.isMovableByWindowBackground = true
+            w.hidesOnDeactivate = false
+            w.contentAspectRatio = NSSize(width: 1, height: 1)
+            w.minSize = NSSize(width: 140, height: 140)
+            w.maxSize = NSSize(width: 420, height: 420)
+            w.contentView = NSHostingView(rootView: WidgetView(engine: engine, hub: hub))
+            if !w.setFrameUsingName("megabass.widget"), let screen = NSScreen.main {
+                let v = screen.visibleFrame
+                w.setFrame(NSRect(x: v.maxX - 212, y: v.maxY - 212, width: 200, height: 200), display: false)
+            }
+            w.setFrameAutosaveName("megabass.widget")
+            widget = w
+        }
+        widget?.orderFrontRegardless()
     }
 
     func applicationWillTerminate(_ note: Notification) { engine.shutdown() }

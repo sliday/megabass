@@ -18,6 +18,8 @@ final class RingSim {
         var px: Double, py: Double, drawn: Bool
         /// Own brightness: a launched spark stays lit while it flies; resting grains follow the music slowly.
         var glow: Double = 0
+        /// Flung into orbit: near circular speed, tiny drag, so it circles and decays slowly.
+        var orbiter = false
     }
 
     var levels: [Double] = []
@@ -102,9 +104,15 @@ final class RingSim {
         advanceGrains(dt)
         radiate(dt)
 
-        // A kick bursts sparks out of the loudest part of the ridge.
+        // A kick bursts sparks out of the loudest part of the ridge; strong kicks fling a few into orbit.
         if kick > lastKick + 0.35, let peak = levels.indices.max(by: { levels[$0] < levels[$1] }) {
             explode(at: angle(ofBand: peak), strength: 0.55 + kick * 0.6)
+            if kick > 0.6 { launchOrbiters(at: angle(ofBand: peak), count: 2 + Int(kick * 2)) }
+        }
+        orbitClock -= dt
+        if orbitClock <= 0, let hot = levels.indices.filter({ heat[$0] > 0.5 }).randomElement() {
+            launchOrbiters(at: angle(ofBand: hot), count: 1)
+            orbitClock = rand(0.6, 1.6)
         }
         lastKick = kick
     }
@@ -208,7 +216,7 @@ final class RingSim {
             // The button is a planet: pull grows toward it (inverse square, ~120 pt/s² at the surface).
             let gravity = 120 * pow(base / max(base * 0.8, g.r), 2)
             if g.air {
-                g.glow *= exp(-dt / 2.5)                              // a flying spark cools slowly
+                g.glow *= exp(-dt / (g.orbiter ? 7 : 2.5))           // a flying spark cools slowly; orbiters slower
             } else {
                 let target = floorFade(level(at: g.th)) * 0.45
                 g.glow += (target - g.glow) * (1 - exp(-dt / (target > g.glow ? 0.15 : 1.2)))
@@ -227,13 +235,19 @@ final class RingSim {
                 }
             }
             if g.air {
-                g.vt *= exp(-g.drag * dt)
-                g.vr = max(-72, g.vr - gravity * dt)
+                // Orbital mechanics in polar form: gravity against the centrifugal term, angular
+                // momentum conserved as the radius changes, light drag so orbits decay slowly.
+                g.vt *= exp(-(g.orbiter ? g.drag * 0.12 : g.drag) * dt)
+                g.vr += (g.vt * g.vt / max(20, g.r) - gravity) * dt
+                g.vr = max(-120, min(160, g.vr))
+                let rOld = g.r
                 g.r += g.vr * dt
+                g.vt *= rOld / max(20, g.r)
                 g.th += g.vt * dt / max(20, g.r)
                 if g.r > escape { grains[i] = newGrain(rest: true); continue }
                 let land = surface(g.th) + g.size / 2
                 if g.r <= land, g.vr < rising {
+                    g.orbiter = false
                     g.r = land
                     g.vr = -g.vr * g.restitution
                     g.vt *= 0.78
@@ -253,6 +267,30 @@ final class RingSim {
             grains[i].air = true
             grains[i].spark = rand(0.2, 0.34)
             grains[i].glow = 1
+        }
+    }
+
+    /// Extra-fast sparks put into orbit above the ridge: 0.95-1.05 x circular speed (bound but
+    /// elliptical), random direction, tiny drag; they circle and spiral down over several seconds.
+    private var orbitClock = 1.0
+    private func launchOrbiters(at th: Double, count: Int) {
+        let gm = 120 * base * base
+        let free = grains.indices.filter { !grains[$0].air }.shuffled().prefix(count)
+        for i in free {
+            let r = rand(80, 98)
+            let dir: Double = Bool.random() ? 1 : -1
+            grains[i].th = th + rand(-0.15, 0.15)
+            grains[i].r = r
+            grains[i].vt = dir * sqrt(gm / r) * rand(0.95, 1.05)
+            grains[i].vr = rand(-6, 6)
+            grains[i].air = true
+            grains[i].orbiter = true
+            grains[i].drag = rand(0.35, 0.75)                         // x0.12 in flight: 0.04-0.09 /s
+            grains[i].glow = 1
+            grains[i].spark = rand(0.3, 0.5)
+            grains[i].age = 0.2
+            grains[i].life = 30
+            grains[i].drawn = false
         }
     }
 
@@ -493,8 +531,9 @@ struct RingVisualizer: View {
             let color = g.spark > 0 ? Heat.color(min(0.7, 0.35 + g.spark)) : Heat.color(0.3 + sim.heat(at: g.th) * 0.8)
             let visibility = max(g.spark > 0 ? 0.9 * min(1, g.spark / 0.12) : 0, g.glow)
             _ = lv
-            let fade = min(1, g.age / 0.15) * max(0, min(1, (sim.escape - g.r) / (sim.escape - sim.fadeFrom)))
-            let size = g.size + (g.spark > 0 ? 0.6 : 0)
+            let fadeStart = g.orbiter ? 118 : sim.fadeFrom
+            let fade = min(1, g.age / 0.15) * max(0, min(1, (sim.escape - g.r) / (sim.escape - fadeStart)))
+            let size = g.size + (g.spark > 0 ? 0.6 : 0) + (g.orbiter ? 0.5 : 0)
             // Motion blur: a streak back along the velocity (radial + tangential) over ~90 ms,
             // transparent at the tail, full colour at the head.
             let blur = 0.09

@@ -52,6 +52,18 @@ final class NowPlayingHub: ObservableObject {
 
     var now: Snapshot { snapshot(active) }
 
+    // MARK: Look (shared by the panel and the widget)
+
+    /// cliamp: one look per station. Spotify/Music: one per song (title + artist).
+    var songKey: String { active == .cliamp ? "" : now.title + "|" + now.artist }
+    var paletteKey: String { active.rawValue + ":" + cliamp.station + ":" + songKey }
+    var planetKey: String {
+        active == .cliamp ? "cliamp:" + (cliamp.station.isEmpty ? "megabass" : cliamp.station) : active.rawValue + ":" + songKey
+    }
+    func applyPalette() {
+        ThemeAnimator.shared.go(to: Palettes.current(source: active, station: cliamp.station, song: songKey), key: paletteKey)
+    }
+
     // MARK: Polling
 
     func startPolling() {

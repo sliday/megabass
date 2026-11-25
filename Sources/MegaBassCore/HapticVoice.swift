@@ -19,6 +19,8 @@ public struct VoiceStatus: Sendable {
     public var noteName: String = ""
     public var kickAt: Double = 0
     public var actuationsPerSecond = 0
+    /// Frequency the motor is playing right now (Hz), 0 when idle.
+    public var hz: Double = 0
     /// Bass mode: median of how late recent periods started vs when the speakers play them (s).
     public var mirrorLate: Double = 0
 }
@@ -219,7 +221,7 @@ public final class HapticVoice {
             tones.sort { $0.amp > $1.amp }
             let use = Array(tones.prefix(6))
             motor.play(use, ms: step * duty * 1000, level: Float(min(1, total)))
-            publish(level: Float(min(1, total)), note: label, kick: kicked && kicks.contains { now - $0.t < 0.001 }, now: now)
+            publish(level: Float(min(1, total)), note: label, kick: kicked && kicks.contains { now - $0.t < 0.001 }, now: now, hz: use.first?.hz ?? 0)
             waitOrKick(until: now + step)
         }
     }
@@ -244,7 +246,7 @@ public final class HapticVoice {
             if mirrorEnd <= now, toneAmp > 0.03 {
                 let seg = max(1, (0.012 * tone.hz).rounded()) / tone.hz
                 motor.play([(tone.hz, 1)], ms: seg * 1000, level: Float(min(1, toneAmp)))
-                publish(level: Float(min(1, toneAmp)), note: Self.name(tone.hz), kick: false, now: now)
+                publish(level: Float(min(1, toneAmp)), note: Self.name(tone.hz), kick: false, now: now, hz: tone.hz)
                 mirrorEnd = now + seg
                 Clock.wait(until: now + seg * 0.9)
             } else {
@@ -253,7 +255,7 @@ public final class HapticVoice {
             return
         }
         guard let c = next else {
-            lock.withLock { _status.level = 0; _status.noteName = "" }
+            lock.withLock { _status.level = 0; _status.noteName = ""; _status.hz = 0 }
             Clock.wait(until: now + 0.002)
             return
         }
@@ -270,7 +272,7 @@ public final class HapticVoice {
         let level = Float(min(1, tones.reduce(0) { $0 + $1.amp }))
         if level > 0.02 {
             motor.play(tones, ms: c.period * 1000, level: level)
-            publish(level: level, note: Self.name(f) + (toneAmp > 0.03 ? " · " + Self.name(tone.hz) : ""), kick: false, now: now)
+            publish(level: level, note: Self.name(f) + (toneAmp > 0.03 ? " · " + Self.name(tone.hz) : ""), kick: false, now: now, hz: f)
         }
         mirrorEnd = now + c.period
         lateHist.append(now - (c.start + delay))
@@ -293,11 +295,12 @@ public final class HapticVoice {
         }
     }
 
-    private func publish(level: Float, note: String, kick: Bool, now: Double) {
+    private func publish(level: Float, note: String, kick: Bool, now: Double, hz: Double = 0) {
         countInWindow += 1
         lock.lock()
         _status.level = level
         _status.noteName = note
+        _status.hz = hz
         if kick { _status.kickAt = now }
         if now - countWindowStart >= 1 {
             _status.actuationsPerSecond = countInWindow

@@ -17,36 +17,13 @@ struct PopoverView: View {
     @ObservedObject var engine: Engine
     @ObservedObject var hub: NowPlayingHub
     @ObservedObject private var theme = ThemeAnimator.shared
+    @ObservedObject private var layout = LayoutState.shared
 
-    /// cliamp: one palette per station. Spotify/Music: one per song (title + artist).
-    private var songKey: String { hub.active == .cliamp ? "" : hub.now.title + "|" + hub.now.artist }
-    private var paletteKey: String { hub.active.rawValue + ":" + hub.cliamp.station + ":" + songKey }
-    /// One planet per cliamp station; per track for Spotify and Music.
-    private var planetKey: String {
-        hub.active == .cliamp ? "cliamp:" + (hub.cliamp.station.isEmpty ? "megabass" : hub.cliamp.station) : hub.active.rawValue + ":" + songKey
-    }
+    private var paletteKey: String { hub.paletteKey }
+    private var planetKey: String { hub.planetKey }
 
     var body: some View {
-        VStack(spacing: 14) {
-            header
-            PowerRing(engine: engine, planet: PlanetStyle.from(planetKey))
-                .padding(.top, 4)
-            if !hub.installedSources.isEmpty { NowPlaying(hub: hub, player: hub.cliamp) }
-            if engine.needsPermission { permissionRow }
-            Group {
-                ModePicker(mode: $engine.mode, enabled: engine.enabled)
-                VStack(spacing: 14) {
-                    LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
-                    ValueSlider(label: "Intensity", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
-            }
-            .opacity(engine.enabled ? 1 : 0.45)
-            .animation(.easeOut(duration: 0.18), value: engine.enabled)
-            footer
-        }
-        .padding(16)
+        full.padding(16)
         .frame(width: 300)
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
@@ -65,9 +42,36 @@ struct PopoverView: View {
         .onDisappear { hub.stopPolling() }
     }
 
-    private func applyPalette() {
-        theme.go(to: Palettes.current(source: hub.active, station: hub.cliamp.station, song: songKey), key: paletteKey)
+    private var full: some View {
+        VStack(spacing: 14) {
+            header
+            PowerRing(engine: engine, planet: PlanetStyle.from(planetKey))
+                .padding(.top, 4)
+            if !hub.installedSources.isEmpty { NowPlaying(hub: hub, player: hub.cliamp) }
+            if engine.needsPermission { permissionRow }
+            // Everything about the trackpad, in one card that says so.
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Trackpad haptics", systemImage: "hand.point.up.left")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    Spacer()
+                    Text(engine.enabled ? "ON" : "OFF").font(.system(size: 10, weight: .bold)).tracking(1)
+                        .foregroundStyle(engine.enabled ? Theme.hot : Theme.secondary)
+                }
+                HapticPad(engine: engine)
+                ModePicker(mode: $engine.mode, enabled: engine.enabled)
+                LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
+                ValueSlider(label: "Intensity", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+            .opacity(engine.enabled ? 1 : 0.6)
+            .animation(.easeOut(duration: 0.18), value: engine.enabled)
+            footer
+        }
     }
+
+    private func applyPalette() { hub.applyPalette() }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -81,6 +85,13 @@ struct PopoverView: View {
                 .tracking(1.2)
                 .foregroundStyle(engine.enabled && engine.source != .none ? Color.white : Theme.secondary)
                 .accessibilityLabel("Status: \(status.lowercased())")
+            Button { withAnimation(.easeOut(duration: 0.2)) { layout.compact = true } } label: {
+                Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.secondary).frame(width: 20, height: 20).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Planet widget: just the planet, floating in a corner")
+            .accessibilityLabel("Planet widget")
         }
     }
 
@@ -139,6 +150,8 @@ struct PopoverView: View {
 struct PowerRing: View {
     @ObservedObject var engine: Engine
     var planet = PlanetStyle.from("megabass")
+    /// In the floating widget a press on the planet can also drag the window.
+    var draggable = false
     @Environment(\.themeTick) private var themeTick
     private let ticks = 48
 
@@ -159,6 +172,16 @@ struct PowerRing: View {
                 .scaleEffect(1 + 0.04 * engine.kickPulse)
             }
             .buttonStyle(.plain)
+            .allowsHitTesting(!draggable)
+            .overlay {
+                if draggable {
+                    // Moving more than 3 pt drags the window; releasing without moving is a click.
+                    Circle().fill(Color.white.opacity(0.001)).frame(width: 96, height: 96)
+                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                            .onChanged { _ in WindowDrag.shared.changed() }
+                            .onEnded { _ in if !WindowDrag.shared.ended() { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } } })
+                }
+            }
             .onHover { PlanetSpin.shared.hover = $0 }
             .help("Planet " + planet.definition)
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")
@@ -214,7 +237,7 @@ struct ModePicker: View {
             }
         }
         .padding(3)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
     }
 
     private func icon(_ m: BassMode) -> String {
