@@ -54,6 +54,10 @@ final class RingSim {
     private var prior: [Double] = []
     var grains: [Grain] = []
     var clock: Double = 0
+    /// Pointer and ring centre in the panel's coordinates; MilkDrop's flow leans toward the pointer.
+    var cursor: CGPoint?
+    var ringCenter: CGPoint = .zero
+    private var flow = CGVector.zero
     /// Recent ridge shapes (newest last) for the afterimage; vizamp fades its canvas instead of clearing.
     var ghosts: [[CGPoint]] = []
     private var last: Double = 0
@@ -295,10 +299,20 @@ final class RingSim {
         // 1. The previous frame, expanded radially from the centre, faded.
         let prev = fb.makeImage()
         fb.clear(CGRect(x: 0, y: 0, width: w, height: w))
+        // Flow: lean the expansion toward the pointer (eased), relax to purely radial without it.
+        var target = CGVector.zero
+        if let p = cursor {
+            let dx = p.x - ringCenter.x, dy = p.y - ringCenter.y, d = max(1, hypot(dx, dy))
+            let m = min(1, d / 110)
+            target = CGVector(dx: dx / d * m, dy: dy / d * m)
+        }
+        flow.dx += (target.dx - flow.dx) * 0.08
+        flow.dy += (target.dy - flow.dy) * 0.08
         if let prev {
             fb.saveGState()
             fb.interpolationQuality = .low
-            fb.translateBy(x: c.x, y: c.y)
+            let shift = 2.4 * w / size.width                     // up to 2.4 pt a frame, in buffer pixels
+            fb.translateBy(x: c.x + flow.dx * shift, y: c.y - flow.dy * shift)   // CG y is flipped
             let zoom = CGFloat(1.012 + bass * 0.03)
             fb.scaleBy(x: zoom, y: zoom)
             fb.translateBy(x: -c.x, y: -c.y)

@@ -49,6 +49,13 @@ struct PopoverView: View {
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
         .environment(\.themeTick, theme.tick)              // every accent view repaints as the palette blends
+        .coordinateSpace(name: "panel")
+        .onContinuousHover(coordinateSpace: .named("panel")) { phase in
+            switch phase {
+            case .active(let p): RingSim.shared.cursor = p
+            case .ended: RingSim.shared.cursor = nil
+            }
+        }
         .onAppear { applyPalette() }
         .onChange(of: paletteKey) { _ in applyPalette() }
         .environment(\.colorScheme, .dark)
@@ -155,6 +162,12 @@ struct PowerRing: View {
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")
         }
         .frame(width: 168, height: 168)
+        .background(GeometryReader { g in
+            // Where the ring sits in the panel, for the cursor-driven MilkDrop flow.
+            let f = g.frame(in: .named("panel"))
+            let _ = { RingSim.shared.ringCenter = CGPoint(x: f.midX, y: f.midY) }()
+            Color.clear
+        })
     }
 
     /// History mapped around the ring: newest at 12 o'clock, mirrored left and right.
