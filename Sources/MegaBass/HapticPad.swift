@@ -38,27 +38,29 @@ struct HapticPad: View {
         inside.clip(to: shape)
         let c = CGPoint(x: pad.midX, y: pad.midY)
         if engine.enabled, hz > 0, level > 0.02 {
-            // Ripples: spacing by frequency (wide = deep), brightness by level.
-            let spacing = max(5, 26 - log2(max(20, hz) / 20) * 5)
-            let speed = 22 + hz * 0.08
-            var r = (t * speed).truncatingRemainder(dividingBy: spacing)
-            // Motion blur: each ring drags a short fading trail inward, as long as it moves in ~25 ms.
-            let trail = min(spacing * 0.8, speed * 0.025)
-            while r < pad.width * 0.55 {
-                let a = (1 - r / (pad.width * 0.55)) * min(1, level * 1.5)
-                for k in 0..<5 {
-                    let rr = r - trail * Double(k) / 4
-                    guard rr > 0 else { continue }
-                    let fade = k == 0 ? 1.0 : (1 - Double(k) / 5) * 0.45
-                    inside.stroke(Path(ellipseIn: CGRect(x: c.x - rr * 1.6, y: c.y - rr * 0.55, width: rr * 3.2, height: rr * 1.1)),
-                                  with: .color(Theme.hot.opacity(a * fade)), lineWidth: k == 0 ? 1.4 : 2.2)
-                }
-                r += spacing
+            // A soundwave, not rings: one soft radial gradient whose brightness follows a sine
+            // outward from the centre. Phase is accumulated and the wavelength eased, so frequency
+            // changes bend the motion instead of making it jump.
+            let w = WavePhase.shared.advance(t: t, hz: hz)
+            let reach = pad.width * 0.55
+            var stops: [Gradient.Stop] = []
+            let n = 28
+            for k in 0...n {
+                let x = Double(k) / Double(n)
+                let wave = 0.5 + 0.5 * sin(2 * .pi * (x * reach / w.lambda - w.phase))
+                let a = wave * (1 - x) * (1 - x) * min(1, level * 1.4) * 0.85
+                stops.append(.init(color: Theme.hot.opacity(a), location: x))
             }
+            var oval = inside
+            oval.translateBy(x: c.x, y: c.y)
+            oval.scaleBy(x: 1.6, y: 0.55)
+            oval.fill(Path(ellipseIn: CGRect(x: -reach, y: -reach, width: reach * 2, height: reach * 2)),
+                      with: .radialGradient(Gradient(stops: stops), center: .zero, startRadius: 0, endRadius: reach))
             let kick = engine.kickPulse
             let d = 7 + 6 * kick
-            inside.fill(Path(ellipseIn: CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d)),
-                        with: .color(Theme.heat.opacity(0.5 + 0.5 * max(level, kick))))
+            inside.fill(Path(ellipseIn: CGRect(x: c.x - d, y: c.y - d, width: d * 2, height: d * 2)),
+                        with: .radialGradient(Gradient(colors: [Theme.heat.opacity(0.5 + 0.5 * max(level, kick)), Theme.heat.opacity(0)]),
+                                              center: c, startRadius: 0, endRadius: d))
         } else {
             let msg = engine.enabled ? "Waiting for music" : "Off"
             inside.draw(Text(msg).font(.system(size: 12, weight: .medium)).foregroundColor(Theme.secondary), at: c, anchor: .center)
@@ -70,6 +72,24 @@ struct HapticPad: View {
             inside.draw(Text(text).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundColor(Theme.secondary),
                         at: CGPoint(x: pad.maxX - 9, y: pad.maxY - 8), anchor: .bottomTrailing)
         }
+    }
+}
+
+/// Soundwave phase for the trackpad visual: accumulated per frame, wavelength eased.
+@MainActor
+final class WavePhase {
+    static let shared = WavePhase()
+    private(set) var phase = 0.0
+    private(set) var lambda = 20.0
+    private var last = 0.0
+
+    func advance(t: Double, hz: Double) -> (phase: Double, lambda: Double) {
+        let dt = last == 0 ? 0 : min(0.1, t - last)
+        last = t
+        let target = max(6, 30 - log2(max(20, hz) / 20) * 5.5)        // deep = long waves, high = short
+        lambda += (target - lambda) * min(1, dt * 3)
+        phase += dt * (1.2 + hz * 0.004)                               // waves per second, eased by lambda
+        return (phase, lambda)
     }
 }
 
