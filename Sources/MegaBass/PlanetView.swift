@@ -2,9 +2,9 @@ import AppKit
 import MegaBassCore
 import SwiftUI
 
-/// The planet's rotation: a heavy body. Its speed follows the song's intensity with inertia; with
-/// Overdrive on, every kick makes it headbang (a forward nod on a damped spring). Hovering turns
-/// the power icon to face you.
+/// The planet's rotation: a heavy body. Its speed follows the song's intensity with slow inertia.
+/// On every beat it headbangs: the top tips toward you on a damped spring (harder with Overdrive),
+/// while the spin itself stays steady. Hovering turns the power icon to face you.
 @MainActor
 final class PlanetSpin {
     static let shared = PlanetSpin()
@@ -15,13 +15,24 @@ final class PlanetSpin {
     private var nod = 0.0, nodV = 0.0, lastKick = 0.0
     private var last = 0.0
 
+    // Beat tracking: tempo from kick intervals (folded into 60-180 BPM, median), and a beat clock
+    // phase-locked to kicks that land near a predicted beat, so it keeps time through weak kicks.
+    private(set) var bpm = 0.0
+    private var period = 0.5, beatPhase = 0.0, beatCount = 0
+    private var kickTimes: [Double] = []
+    /// Share of recent kicks off the beat grid (beats and half beats); high means the tempo is lost.
+    private var miss = 1.0
+    /// Headbang body motion, applied to the whole planet system: sideways rock and a downward bob.
+    private(set) var wobble = 0.0, bob = 0.0
+    private var bobV = 0.0
+
     /// Advances the spin. `rate` is the planet's own base speed; `energy` the song's loudness;
     /// `kick` the kick pulse; `headbang` whether Overdrive is on. Returns the angle to draw.
     func advance(_ t: Double, on: Bool, rate: Double = 0.2, energy: Double = 0, kick: Double = 0, headbang: Bool = false) -> Double {
         let dt = last == 0 ? 0 : min(0.1, t - last)
         last = t
         if !on {
-            lon = 0; omega = rate; nod = 0; nodV = 0                // off: icon faces you, easy to find
+            lon = 0; omega = rate; nod = 0; nodV = 0; wobble = 0; bob = 0; bobV = 0   // off: still, icon faces you
             return 0
         }
         if hover {
@@ -30,22 +41,68 @@ final class PlanetSpin {
             if abs(target - lon) < 0.002 { lon = target }
             omega = rate
             nod *= exp(-dt * 8)
-            return lon + nod
+            return lon
         }
-        // Heavy: speed eases toward 0.6-4x the base rate over ~2.5 s.
-        let target = rate * (0.6 + min(1, energy * 2.8) * 3.4)
-        omega += (target - omega) * min(1, dt / 2.5)
+        // Heavy: speed eases toward 0.6-2.6x the base rate over ~4 s.
+        let target = rate * (0.6 + min(1, energy * 2.8) * 2.0)
+        omega += (target - omega) * min(1, dt / 4)
         lon += omega * dt
-        // Headbang: a kick kicks the nod forward; a stiff, damped spring brings it back.
-        if headbang && kick > lastKick + 0.35 { nodV += 2.6 * kick }
+        // Tempo: intervals between kicks, folded into 60-180 BPM, median of the last 12.
+        let isKick = kick > lastKick + 0.35
         lastKick = kick
+        if isKick {
+            kickTimes.append(t)
+            if kickTimes.count > 13 { kickTimes.removeFirst() }
+            let gaps = zip(kickTimes.dropFirst(), kickTimes).map { $0 - $1 }.map { g -> Double in
+                var x = g
+                while x < 0.333 { x *= 2 }
+                while x > 1.0 { x /= 2 }
+                return x
+            }
+            // Phase lock: pull the beat clock toward a kick near a predicted beat, and trim the
+            // period by the same error so the clock settles on the true tempo. Kicks on the
+            // half beat (syncopation) still count as on the grid.
+            let err = beatPhase - beatPhase.rounded()
+            let offGrid = min(abs(err), abs(0.5 - abs(err))) > 0.12
+            miss += ((offGrid ? 1 : 0) - miss) * 0.15
+            // The median retunes only while the grid is lost: syncopated gaps (1.5 beats) bias it.
+            if gaps.count >= 3, bpm == 0 || miss > 0.5 {
+                let med = gaps.sorted()[gaps.count / 2]
+                if bpm == 0 || abs(med - period) > period * 0.08 { period += (med - period) * 0.3 }
+            }
+            if abs(err) < 0.25 {
+                beatPhase -= err * 0.5
+                if bpm > 0 { period = min(1, max(0.333, period * (1 + err * 0.1))) }
+            }
+            if gaps.count >= 3 { bpm = 60 / period }
+        }
+        // Beat clock; on each beat the planet headbangs (Overdrive doubles it).
+        let before = beatPhase
+        beatPhase += dt / max(0.333, period)
+        let loud = min(1, energy * 2.5)
+        if bpm > 0, floor(beatPhase) > floor(before), loud > 0.08 {
+            beatCount += 1
+            let hit = (0.9 + loud * 1.6) * (headbang ? 1.6 : 1)
+            nodV += hit
+            bobV += 22 * loud
+        }
         nodV += (-70 * nod - 9 * nodV) * dt
         nod += nodV * dt
-        return lon + nod
+        // Bob: a quick dip on the beat, sprung back up. Rock: side to side across two beats.
+        bobV += (-180 * bob - 16 * bobV) * dt
+        bob += bobV * dt
+        let rock = bpm > 0 ? sin(.pi * beatPhase) * 0.06 * loud : 0
+        wobble += (rock - wobble) * min(1, dt * 8)
+        return lon
     }
 
+    /// The headbang nod (radians): positive tips the planet's top toward you.
+    var pitch: Double { max(-0.45, min(0.45, nod)) }
+    /// How open the ring plane looks (minor/major axis), widening as the planet nods toward you.
+    var ringOpen: Double { max(0.05, min(0.62, sin(0.2424 + pitch))) }
+
     /// How far the surface turns in one frame, as a fraction of a full turn (for motion blur).
-    var blurTurn: Double { (abs(omega) + abs(nodV)) / 30 / (2 * .pi) }
+    var blurTurn: Double { abs(omega) / 30 / (2 * .pi) }
 }
 
 /// The power button as a small gas giant: banded surface in the station's palette that flows like
@@ -103,6 +160,15 @@ struct PlanetView: View, Equatable {
         let on = engine.enabled || alwaysOn
         _ = WavePhase.shared.advance(t: t, hz: engine.hapticHz)          // rings pulse with the trackpad wave
         OrbitSim.shared.step(t: t, kick: on ? engine.kickPulse : 0, levels: on ? RingSim.shared.levels : [], R: Double(radius), on: on)
+        // Headbang body motion: the whole system (planet, rings, moons) rocks and bobs as one.
+        var ctx = ctx
+        if !alwaysOn {
+            let s = PlanetSpin.shared
+            let c = CGPoint(x: size.width / 2, y: size.height / 2)
+            ctx.translateBy(x: c.x, y: c.y + s.bob)
+            ctx.rotate(by: .radians(s.wobble))
+            ctx.translateBy(x: -c.x, y: -c.y)
+        }
         guard !alwaysOn, let (from, p) = PlanetMorph.shared.update(to: style, t: t) else {
             drawPlanet(ctx, size: size, t: t, st: style)
             return
@@ -188,7 +254,7 @@ struct PlanetView: View, Equatable {
                                                   rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
                                                   flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35),
                                                   icon: true, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),
-                                                  blur: Float(PlanetSpin.shared.blurTurn)) {
+                                                  blur: Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -342,13 +408,13 @@ struct PlanetView: View, Equatable {
             sh.rotate(by: .radians(planeTilt(st)))
             let inner = R * 1.18, outer = R * (1.18 + st.ringWidth)
             var band = Path()
-            band.addEllipse(in: CGRect(x: -outer, y: -outer * 0.24, width: outer * 2, height: outer * 0.48))
-            band.addEllipse(in: CGRect(x: -inner, y: -inner * 0.24, width: inner * 2, height: inner * 0.48))
+            band.addEllipse(in: CGRect(x: -outer, y: -outer * ringOpen, width: outer * 2, height: outer * ringOpen * 2))
+            band.addEllipse(in: CGRect(x: -inner, y: -inner * ringOpen, width: inner * 2, height: inner * ringOpen * 2))
             if st.ringGap >= 0 {
                 let g0 = inner + (outer - inner) * Double(st.ringGap) / Double(st.ringLines - 1)
                 let g1 = inner + (outer - inner) * Double(st.ringGap + 1) / Double(st.ringLines - 1)
-                band.addEllipse(in: CGRect(x: -g1, y: -g1 * 0.24, width: g1 * 2, height: g1 * 0.48))
-                band.addEllipse(in: CGRect(x: -g0, y: -g0 * 0.24, width: g0 * 2, height: g0 * 0.48))
+                band.addEllipse(in: CGRect(x: -g1, y: -g1 * ringOpen, width: g1 * 2, height: g1 * ringOpen * 2))
+                band.addEllipse(in: CGRect(x: -g0, y: -g0 * ringOpen, width: g0 * 2, height: g0 * ringOpen * 2))
             }
             sh.fill(band, with: .color(.black.opacity(on ? 0.42 : 0.22)), style: FillStyle(eoFill: true))
         }
@@ -405,6 +471,8 @@ struct PlanetView: View, Equatable {
 
     /// The orbital plane: the ring's tilt, or a gentler version of the axial tilt without rings.
     private func planeTilt(_ st: PlanetStyle) -> Double { st.rings ? st.ringTilt : st.tilt * 0.6 }
+    /// The ring plane's opening, following the headbang nod.
+    private var ringOpen: Double { PlanetSpin.shared.ringOpen }
 
     /// The moons on this planet: kick moon always, shepherds on ringed planets.
     private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false }
@@ -419,7 +487,7 @@ struct PlanetView: View, Equatable {
     }
     /// A point on the orbital plane in screen space (relative to the planet centre).
     private func moonPoint(_ m: Moon, tilt: Double) -> CGPoint {
-        let x = cos(m.angle) * m.radius, y = sin(m.angle) * m.radius * 0.24
+        let x = cos(m.angle) * m.radius, y = sin(m.angle) * m.radius * ringOpen
         return CGPoint(x: x * cos(tilt) - y * sin(tilt), y: x * sin(tilt) + y * cos(tilt))
     }
 
@@ -441,7 +509,7 @@ struct PlanetView: View, Equatable {
             let bump = on && since >= 0 && since < 0.07 ? sin(.pi * since / 0.07) : 0
             // Haptic waves: brightness travels outward across the lines with the trackpad's soundwave.
             let pulse = on ? (0.5 + 0.5 * sin(2 * .pi * (x * 1.6 - wave.phase))) * min(1, (orbit.groups[0] + 0.15) * 1.6) : 0
-            let rx = (inner + (outer - inner) * x) * (1 + 0.03 * bump), ry = rx * 0.24
+            let rx = (inner + (outer - inner) * x) * (1 + 0.03 * bump), ry = rx * ringOpen
             let base = on ? 0.3 + 0.6 * lv : 0.14
             let alpha = min(1, base * (0.55 + 0.45 * pulse) + 0.5 * bump) * (front ? 1 : 0.6)
             let tint = mix(color, .white, min(0.6, 0.25 * pulse + 0.35 * bump))
@@ -453,7 +521,7 @@ struct PlanetView: View, Equatable {
             for w in orbit.wakes {
                 let age = orbit.time - w.at
                 guard age < 0.3 else { continue }
-                let rx = w.outer ? outer : inner, ry = rx * 0.24
+                let rx = w.outer ? outer : inner, ry = rx * ringOpen
                 var arc = Path()
                 for j in 0...12 {
                     let a = w.angle - 0.52 * Double(j) / 12
@@ -486,7 +554,7 @@ struct PlanetView: View, Equatable {
                         let ang = a.angle + (b.angle - a.angle) * f, rad = ra + (rb - ra) * f
                         let age = orbit.time - (a.t + (b.t - a.t) * f)
                         guard age < 0.9 else { continue }
-                        pts.append((CGPoint(x: cos(ang) * rad, y: sin(ang) * rad * 0.24), age / 0.9, sin(ang) >= 0))
+                        pts.append((CGPoint(x: cos(ang) * rad, y: sin(ang) * rad * ringOpen), age / 0.9, sin(ang) >= 0))
                     }
                 }
                 let tint = mix(color, .white, orbit.speed * 0.5)
@@ -508,7 +576,7 @@ struct PlanetView: View, Equatable {
                 }
             }
             guard (sin(m.angle) >= 0) == front else { continue }
-            let p = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * 0.24)
+            let p = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * ringOpen)
             // Faster moons shine brighter: whiter core, bigger, stronger halo.
             let fast = on ? orbit.speed : 0
             let glow = on ? m.glow + fast * 0.9 : 0.15

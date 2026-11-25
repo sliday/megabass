@@ -246,6 +246,8 @@ public final class HapticVoice {
         let next = cycles.first
         let intensity = _intensity, delay = _delay, drive = Double(_overdrive), floorHz = _rumbleHz
         // Overdrive: kicks due now become thumps riding inside the bass cycles.
+        // Kicks due now also mark the status, so the visuals (planet headbang, ring ripples) see them.
+        if pendingKicks.contains(where: { $0.t <= due && due - $0.t < 0.1 }) { _status.kickAt = now }
         if drive > 0 {
             while let k = pendingKicks.first, k.t <= due {
                 pendingKicks.removeFirst()

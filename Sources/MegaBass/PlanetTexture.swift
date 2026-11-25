@@ -259,6 +259,7 @@ final class PlanetTextures {
     }
     private var pixels: [UInt32] = []
     private var side = 0
+    private var mapTilt = Double.nan
 
     private static func rgb(_ c: Color) -> SIMD3<Float> {
         let n = NSColor(c).usingColorSpace(.sRGB) ?? .gray
@@ -309,10 +310,11 @@ final class PlanetTextures {
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
                 flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
-                sun: Float = 1, iconColor: Color = .white, blur: Float = 0) -> CGImage? {
+                sun: Float = 1, iconColor: Color = .white, blur: Float = 0, pitch: Double = 0) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
-        let key = "\(n)|\(tilt)"
-        if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
+        let q = (pitch / 0.004).rounded()                    // the map rebuilds only while the nod moves
+        let key = "\(n)|\(tilt)|\(q)"
+        if key != mapKey { buildMap(n: n, tilt: tilt, pitch: q * 0.004); mapKey = key }
         let W = PlanetTexture.W
         // Minus spin: the surface turns rightward, the same way as the power icon.
         let shift = -Float(spin / (2 * .pi)) * Float(W)
@@ -440,16 +442,21 @@ final class PlanetTextures {
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }
 
-    private func buildMap(n: Int, tilt: Double) {
-        side = n
-        latIdx = .init(repeating: 0, count: n * n); lonBase = .init(repeating: 0, count: n * n)
-        light = .init(repeating: 0, count: n * n); inside = .init(repeating: false, count: n * n)
-        normal = .init(repeating: .zero, count: n * n); east = .init(repeating: .zero, count: n * n)
-        north = .init(repeating: .zero, count: n * n); cosLat = .init(repeating: 1, count: n * n)
-        latF = .init(repeating: 0, count: n * n)
-        pixels = .init(repeating: 0, count: n * n)
+    private func buildMap(n: Int, tilt: Double, pitch: Double = 0) {
+        // A nod alone (same size and tilt) keeps the buffers, the lighting and the normals.
+        let fresh = n != side || tilt != mapTilt || latIdx.count != n * n
+        side = n; mapTilt = tilt
+        if fresh {
+            latIdx = .init(repeating: 0, count: n * n); lonBase = .init(repeating: 0, count: n * n)
+            light = .init(repeating: 0, count: n * n); inside = .init(repeating: false, count: n * n)
+            normal = .init(repeating: .zero, count: n * n); east = .init(repeating: .zero, count: n * n)
+            north = .init(repeating: .zero, count: n * n); cosLat = .init(repeating: 1, count: n * n)
+            latF = .init(repeating: 0, count: n * n)
+            pixels = .init(repeating: 0, count: n * n)
+        }
         let L = simd_normalize(SIMD3<Float>(-0.45, -0.5, 0.74))          // light from top-left, toward the viewer
         let ct = Float(cos(-tilt)), stl = Float(sin(-tilt))
+        let cp = Float(cos(pitch)), sp = Float(sin(pitch))
         for y in 0..<n {
             for x in 0..<n {
                 let nx = (Float(x) + 0.5) / Float(n) * 2 - 1, ny = (Float(y) + 0.5) / Float(n) * 2 - 1
@@ -458,19 +465,26 @@ final class PlanetTextures {
                 guard d2 <= 1 else { continue }
                 inside[i] = true
                 let z = sqrt(1 - d2)
-                // Undo the axial tilt (rotate around the view axis), then read latitude/longitude.
-                let tx = nx * ct - ny * stl, ty = nx * stl + ny * ct
+                // Nod: tip the top toward the viewer (around the screen's x axis). Then undo the
+                // axial tilt (around the view axis) and read latitude/longitude.
+                let py = ny * cp - z * sp, pz = ny * sp + z * cp
+                let tx = nx * ct - py * stl, ty = nx * stl + py * ct
                 let lat = asin(max(-1, min(1, -ty)))
-                let lon = atan2(tx, z)
+                let lon = atan2(tx, pz)
                 latIdx[i] = Int32(max(0, min(Float(PlanetTexture.H - 1), (0.5 - lat / .pi) * Float(PlanetTexture.H))))
                 lonBase[i] = (lon / (2 * .pi) + 1) * Float(PlanetTexture.W)
-                let lam = max(0, simd_dot(SIMD3(nx, ny, z), L))
-                light[i] = 0.1 + 0.95 * pow(lam, 0.8)
-                // Surface frame in view space: normal, east (+longitude), north (+latitude).
-                normal[i] = SIMD3(nx, ny, z)
+                if fresh {
+                    let lam = max(0, simd_dot(SIMD3(nx, ny, z), L))
+                    light[i] = 0.1 + 0.95 * pow(lam, 0.8)
+                    normal[i] = SIMD3(nx, ny, z)
+                }
+                // Surface frame in view space: east (+longitude), north (+latitude).
                 let sl = sin(lon), cl = cos(lon), sa = sin(lat), ca = cos(lat)
                 let eP = SIMD3<Float>(cl, 0, -sl), nP = SIMD3<Float>(-sa * sl, -ca, -sa * cl)
-                func back(_ v: SIMD3<Float>) -> SIMD3<Float> { SIMD3(v.x * ct + v.y * stl, -v.x * stl + v.y * ct, v.z) }
+                func back(_ v: SIMD3<Float>) -> SIMD3<Float> {
+                    let yp = -v.x * stl + v.y * ct
+                    return SIMD3(v.x * ct + v.y * stl, yp * cp + v.z * sp, -yp * sp + v.z * cp)
+                }
                 east[i] = back(eP); north[i] = back(nP)
                 cosLat[i] = ca
                 latF[i] = lat
