@@ -148,10 +148,14 @@ final class RingSim {
 
     // MARK: Prominences
 
-    /// A solar prominence: a loop (or an open plume) of plasma blasting off the planet's limb where
-    /// a band's level shoots up. White-hot at birth, it cools to orange and red and lingers ~2-4 s.
-    struct Prominence { var th: Double; var span: Double; var born: Double; var power: Double; var height: Double; var seed: Double; var loop: Bool }
+    /// A solar prominence: a spray of tiny sparks blasting off the planet's limb where a band's
+    /// level shoots up. Each spark is ballistic: it arcs out under the planet's gravity and falls
+    /// back, so a loop of them traces the prominence's curve. White-hot at launch, cooling to red.
+    struct Prominence { var th: Double; var span: Double; var born: Double; var power: Double; var side: Double; var plume: Bool; var emitted = 0 }
     var prominences: [Prominence] = []
+    /// A prominence spark in polar coordinates around the planet; `l` is its angular momentum (r²ω).
+    struct Sprinkle { var r: Double; var th: Double; var vr: Double; var l: Double; var born: Double; var life: Double; var size: Double }
+    var sprinkles: [Sprinkle] = []
     private var promCool: [Double] = []
     private var promGap = 0.0, promRef = 7.0
 
@@ -178,9 +182,34 @@ final class RingSim {
             promGap = 0.25
             let power = min(1, (b.v - 7) / 10 + 0.3 * levels[i])
             prominences.append(Prominence(th: angle(ofBand: i), span: rand(0.22, 0.5), born: clock, power: power,
-                                          height: rand(0.55, 1), seed: rand(0, 100), loop: rand(0, 1) < 0.7))
+                                          side: rand(0, 1) < 0.5 ? -1 : 1, plume: rand(0, 1) < 0.3))
+        }
+        // Each prominence sprays its sparks over its first 0.3 s.
+        for k in prominences.indices {
+            let p = prominences[k], age = clock - p.born
+            let total = Int(36 + 60 * p.power)
+            let due = min(total, Int(Double(total) * min(1, age / 0.3)) + 1)
+            while prominences[k].emitted < due {
+                prominences[k].emitted += 1
+                // A loop: sparks leave one foot toward the other and arc over. A plume: straight up and out.
+                let th = p.plume ? p.th + rand(-0.06, 0.06) : p.th - p.side * p.span / 2 + rand(-0.05, 0.05)
+                let vt = p.plume ? rand(-18, 18) : p.side * rand(25, 75)
+                let vr = rand(100, 190) * (0.55 + 0.45 * p.power)
+                sprinkles.append(Sprinkle(r: base - 1, th: th, vr: vr, l: (base - 1) * vt, born: clock,
+                                          life: rand(1.2, 2.6), size: rand(0.6, 1.5)))
+            }
         }
         prominences.removeAll { clock - $0.born > Self.linger($0) }
+        // Sparks fly under inverse-square gravity, keeping their angular momentum, and land back.
+        for k in sprinkles.indices {
+            var q = sprinkles[k]
+            let w = q.l / (q.r * q.r)
+            q.vr += (-380 * pow(base / q.r, 2) + q.r * w * w) * dt
+            q.r += q.vr * dt
+            q.th += w * dt
+            sprinkles[k] = q
+        }
+        sprinkles.removeAll { $0.r < base - 2 || clock - $0.born > $0.life }
     }
 
     /// Interpolates a per-band array around the lap, wrapping highest into lowest at the seam.
@@ -549,40 +578,37 @@ struct RingVisualizer: View, Equatable {
         .accessibilityHidden(true)
     }
 
-    /// Prominences, additive: a wide soft glow, a mid band and a hot core that starts white (the
-    /// hotspot) and cools along the blackbody ramp while the loop rises, drifts and fades.
+    /// Prominences, additive: each spark a tiny streak along its flight, white-hot at launch and
+    /// cooling along the blackbody ramp; sparks are batched into a few paths by temperature.
     private func drawProminences(_ g: GraphicsContext, _ c: CGPoint) {
+        var cores = [Path](repeating: Path(), count: 5), halos = [Path](repeating: Path(), count: 5)
+        var fades = [Double](repeating: 0, count: 5), counts = [Int](repeating: 0, count: 5)
+        for q in sim.sprinkles {
+            let age = sim.clock - q.born
+            let temp = 0.3 + 0.7 * exp(-age / 0.7)
+            let b = min(4, Int(temp * 5))
+            let head = pt(c, q.th, q.r)
+            let w = q.l / (q.r * q.r)
+            // Tail: where it was 25 ms ago (radial and tangential motion).
+            let tail = pt(c, q.th - w * 0.025, q.r - q.vr * 0.025)
+            cores[b].move(to: tail); cores[b].addLine(to: head)
+            if q.size > 1.1 { halos[b].addEllipse(in: CGRect(x: head.x - q.size * 2, y: head.y - q.size * 2, width: q.size * 4, height: q.size * 4)) }
+            fades[b] += max(0, 1 - age / q.life); counts[b] += 1
+        }
+        for b in 0..<5 where counts[b] > 0 {
+            let col = Self.blackbody((Double(b) + 0.5) / 5)
+            let f = fades[b] / Double(counts[b])
+            g.fill(halos[b], with: .color(col.opacity(0.18 * f)))
+            g.stroke(cores[b], with: .color(col.opacity(0.95 * f)), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+        }
+        // The blast flash at the limb.
         for p in sim.prominences {
-            let age = sim.clock - p.born, life = RingSim.linger(p)
-            let grow = 1 - exp(-age / 0.12)                                  // the blast
-            let fade = pow(max(0, 1 - age / life), 1.6)
-            let temp = 0.3 + 0.7 * exp(-age / 0.9)                           // white-hot, cooling
-            let h = sim.base * (0.3 + 0.6 * p.height * (0.4 + 0.6 * p.power)) * grow * (1 + 0.22 * age / life)
-            let foot = sim.base - 3
-            let wob = sin(sim.clock * 2.3 + p.seed) * 0.05
-            var path = Path()
-            if p.loop {
-                let a0 = p.th - p.span / 2, a1 = p.th + p.span / 2
-                path.move(to: pt(c, a0, foot))
-                path.addCurve(to: pt(c, a1, foot),
-                              control1: pt(c, p.th - p.span * 0.42 + wob, foot + h * 1.33),
-                              control2: pt(c, p.th + p.span * 0.42 + wob, foot + h * 1.33))
-            } else {
-                let bend = (p.seed.truncatingRemainder(dividingBy: 2) - 1) * p.span
-                path.move(to: pt(c, p.th, foot))
-                path.addCurve(to: pt(c, p.th + bend * 0.9 + wob, foot + h * 1.25),
-                              control1: pt(c, p.th + wob, foot + h * 0.5), control2: pt(c, p.th + bend * 0.4, foot + h))
-            }
-            let col = Self.blackbody(temp)
-            g.stroke(path, with: .color(col.opacity(0.16 * fade)), style: StrokeStyle(lineWidth: 9 + 9 * p.power, lineCap: .round))
-            g.stroke(path, with: .color(col.opacity(0.45 * fade)), style: StrokeStyle(lineWidth: 3 + 2.5 * p.power, lineCap: .round))
-            g.stroke(path, with: .color(Self.blackbody(min(1, temp + 0.25)).opacity(0.85 * fade)), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-            if age < 0.25 {                                                   // the blast flash at the limb
-                let f = 1 - age / 0.25, q = pt(c, p.th, sim.base), r = 6 + 14 * p.power
-                g.fill(Path(ellipseIn: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2)),
-                       with: .radialGradient(Gradient(colors: [Color.white.opacity(0.7 * f), col.opacity(0.3 * f), col.opacity(0)]),
-                                             center: q, startRadius: 0, endRadius: r))
-            }
+            let age = sim.clock - p.born
+            guard age < 0.25 else { continue }
+            let f = 1 - age / 0.25, q = pt(c, p.th, sim.base), r = 6 + 14 * p.power
+            g.fill(Path(ellipseIn: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2)),
+                   with: .radialGradient(Gradient(colors: [Color.white.opacity(0.7 * f), Self.blackbody(0.8).opacity(0.3 * f), Color.clear]),
+                                         center: q, startRadius: 0, endRadius: r))
         }
     }
 
