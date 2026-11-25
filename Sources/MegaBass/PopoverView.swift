@@ -300,7 +300,7 @@ struct LowBandControl: View {
             }
             BandStrip(low: $low, high: $high, spectrum: spectrum, live: live)
         }
-        .help("Left handle: how deep. Right handle: how much of the song. (\(hzText))")
+        .help("Sweep across the bars to draw the range, or drag a handle. Left: how deep. Right: how much of the song. (\(hzText))")
     }
 }
 
@@ -361,16 +361,34 @@ struct BandStrip: View {
             }
             .frame(width: w, height: 54, alignment: .topLeading)
             .contentShape(Rectangle())
+            // Grab a handle (within 12 pt) to move it, or sweep across the bars to draw the range.
+            // A plain click moves the nearer edge there.
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { d in
                     let key = "band"
                     if Detents.last[key] == nil {
-                        Detents.last[key] = abs(d.startLocation.x - xl) <= abs(d.startLocation.x - xh) ? 0 : 1
+                        let dl = abs(d.startLocation.x - xl), dh = abs(d.startLocation.x - xh)
+                        Detents.last[key] = min(dl, dh) <= 12 ? (dl <= dh ? 0 : 1) : 2
                     }
                     let f = hz(d.location.x, w).rounded()
-                    if Detents.last[key] == 0 { low = min(f, high / 1.5) } else { high = max(f, low * 1.5) }
+                    switch Detents.last[key] {
+                    case 0: low = min(f, high / 1.5)
+                    case 1: high = max(f, low * 1.5)
+                    default:
+                        guard abs(d.translation.width) >= 4 else { return }
+                        let a = hz(d.startLocation.x, w).rounded()
+                        let lo = max(r.lowerBound, min(a, f)), hi = min(r.upperBound, max(a, f))
+                        low = lo
+                        high = max(hi, lo * 1.5)
+                    }
                 }
-                .onEnded { _ in Detents.last["band"] = nil })
+                .onEnded { d in
+                    if Detents.last["band"] == 2, abs(d.translation.width) < 4 {
+                        let f = hz(d.location.x, w).rounded()
+                        if abs(d.location.x - xl) <= abs(d.location.x - xh) { low = min(f, high / 1.5) } else { high = max(f, low * 1.5) }
+                    }
+                    Detents.last["band"] = nil
+                })
         }
         .frame(height: 54)
         .animation(.linear(duration: 0.06), value: spectrum)
