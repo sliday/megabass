@@ -597,6 +597,8 @@ struct PlanetView: View, Equatable {
             }
         }
 
+        if st.kind == .eyeball { drawLids(ctx, c: c, R: R, on: on, kick: kick, t: t, hot: hot) }
+
         // Limb: the thin bright edge of the atmosphere on the lit side.
         if on {
             ctx.stroke(disc, with: .linearGradient(Gradient(colors: [mix(heat, .white, 0.5).opacity(0.9), heat.opacity(0.0)]),
@@ -671,6 +673,90 @@ struct PlanetView: View, Equatable {
         }
         return out
     }
+    /// Eyelids over the eyeball, simplified from a real eye: an almond opening between the upper and lower
+    /// lids (the upper lid follows the gaze down), skin with a crease, a pink wet margin, the upper lid's
+    /// shadow on the eye, the caruncle at the inner corner, lashes curling out toward the corners, and
+    /// blinks. The eyeball turns underneath, so the iris moves within the opening.
+    private func drawLids(_ ctx: GraphicsContext, c: CGPoint, R: Double, on: Bool, kick: Double, t: Double, hot: Color) {
+        let open = EyeBlink.shared.step(t: t, kick: kick)
+        let gaze = EyeLook.shared.pitch
+        let inner = CGPoint(x: c.x - R * 0.98, y: c.y + R * 0.06), outer = CGPoint(x: c.x + R * 0.98, y: c.y - R * 0.02)
+        let mid = CGPoint(x: (inner.x + outer.x) / 2, y: (inner.y + outer.y) / 2)
+        let upCtl = CGPoint(x: c.x - R * 0.1, y: mid.y + (-R * 1.1 + gaze * R * 0.5) * open)
+        let lowCtl = CGPoint(x: c.x + R * 0.05, y: mid.y + (R * 0.8 + gaze * R * 0.15) * open)
+        var opening = Path()
+        opening.move(to: inner); opening.addQuadCurve(to: outer, control: upCtl); opening.addQuadCurve(to: inner, control: lowCtl)
+        let disc = Path(ellipseIn: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
+        func onUpper(_ u: Double) -> CGPoint {
+            let a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, d = u * u
+            return CGPoint(x: a * inner.x + b * upCtl.x + d * outer.x, y: a * inner.y + b * upCtl.y + d * outer.y)
+        }
+        func onLower(_ u: Double) -> CGPoint {
+            let a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, d = u * u
+            return CGPoint(x: a * outer.x + b * lowCtl.x + d * inner.x, y: a * outer.y + b * lowCtl.y + d * inner.y)
+        }
+        // The upper lid's shadow on the eyeball, just under its margin.
+        var shade = ctx
+        shade.clip(to: opening)
+        shade.addFilter(.blur(radius: R * 0.06))
+        var lidEdge = Path()
+        lidEdge.move(to: inner); lidEdge.addQuadCurve(to: outer, control: upCtl)
+        shade.stroke(lidEdge, with: .color(.black.opacity(0.5)), lineWidth: R * 0.16)
+        // Caruncle: the pink fold at the inner corner.
+        let car = CGPoint(x: inner.x + R * 0.1, y: inner.y - R * 0.01)
+        var carC = ctx
+        carC.clip(to: opening)
+        carC.fill(Path(ellipseIn: CGRect(x: car.x - R * 0.09, y: car.y - R * 0.07, width: R * 0.18, height: R * 0.14)),
+                  with: .radialGradient(Gradient(colors: [Color(red: 0.86, green: 0.45, blue: 0.48), Color(red: 0.86, green: 0.45, blue: 0.48).opacity(0)]),
+                                        center: car, startRadius: 0, endRadius: R * 0.1))
+        // Skin: everything on the ball outside the opening, rounded by the light from the top left.
+        let skin = on ? mix(Color(red: 0.8, green: 0.6, blue: 0.52), hot, 0.12) : Color(white: 0.42)
+        var lids = disc
+        lids.addPath(opening)
+        var sk = ctx
+        sk.fill(lids, with: .radialGradient(Gradient(colors: [mix(skin, .white, 0.25), skin, mix(skin, .black, 0.55)]),
+                                            center: CGPoint(x: c.x - R * 0.35, y: c.y - R * 0.45), startRadius: 0, endRadius: R * 1.5),
+                style: FillStyle(eoFill: true))
+        sk.clip(to: lids, style: FillStyle(eoFill: true))
+        // The crease above the upper lid, and the lid thickness darkening toward the margin.
+        var crease = Path()
+        crease.move(to: CGPoint(x: inner.x + R * 0.08, y: inner.y - R * 0.12))
+        crease.addQuadCurve(to: CGPoint(x: outer.x - R * 0.06, y: outer.y - R * 0.16),
+                            control: CGPoint(x: upCtl.x, y: min(upCtl.y, mid.y - R * 0.9) - R * 0.35))
+        sk.stroke(crease, with: .color(mix(skin, .black, 0.45).opacity(0.7)), lineWidth: R * 0.03)
+        sk.stroke(opening, with: .color(mix(skin, .black, 0.35).opacity(0.6)), lineWidth: R * 0.1)
+        // The margins: pink, with a wet glint along the lower one.
+        ctx.stroke(opening, with: .color(Color(red: 0.78, green: 0.42, blue: 0.42).opacity(0.85)), lineWidth: max(0.8, R * 0.025))
+        var wet = Path()
+        for k in 0...20 { let p = onLower(0.15 + 0.7 * Double(k) / 20); if k == 0 { wet.move(to: p) } else { wet.addLine(to: CGPoint(x: p.x, y: p.y - R * 0.025)) } }
+        ctx.stroke(wet, with: .color(.white.opacity(on ? 0.55 : 0.25)), lineWidth: 0.6)
+        // Lashes: longest mid-lid, curling out toward the corners; fewer and shorter below.
+        let lashColor = Color(red: 0.08, green: 0.05, blue: 0.04)
+        var lashes = Path()
+        func jitter(_ k: Int, _ salt: Double) -> Double { let x = sin(Double(k) * 12.9898 + salt) * 43758.5453; return x - floor(x) }
+        for k in 0..<24 {
+            let u = 0.1 + 0.8 * (Double(k) + 0.6 * (jitter(k, 1) - 0.5)) / 23
+            let p = onUpper(u), q = onUpper(min(1, u + 0.01))
+            let tx = q.x - p.x, ty = q.y - p.y, tl = max(0.001, hypot(tx, ty))
+            let nx = ty / tl, ny = -tx / tl                                  // away from the eye (up)
+            let len = R * (0.1 + 0.16 * sin(.pi * u)) * (0.75 + 0.5 * jitter(k, 2))
+            let curl = (u - 0.5) * 0.9 + (jitter(k, 3) - 0.5) * 0.35
+            let tip = CGPoint(x: p.x + nx * len + tx / tl * len * curl, y: p.y + ny * len + ty / tl * len * curl - len * 0.15)
+            lashes.move(to: p)
+            lashes.addQuadCurve(to: tip, control: CGPoint(x: p.x + nx * len * 0.7, y: p.y + ny * len * 0.7))
+        }
+        for k in 0..<11 {
+            let u = 0.18 + 0.64 * (Double(k) + 0.6 * (jitter(k, 4) - 0.5)) / 10
+            let p = onLower(u), q = onLower(min(1, u + 0.01))
+            let tx = q.x - p.x, ty = q.y - p.y, tl = max(0.001, hypot(tx, ty))
+            let nx = ty / tl, ny = -tx / tl                                  // away from the eye (down)
+            let len = R * (0.05 + 0.05 * sin(.pi * u)) * (0.7 + 0.6 * jitter(k, 5))
+            lashes.move(to: p)
+            lashes.addLine(to: CGPoint(x: p.x + nx * len, y: p.y + ny * len))
+        }
+        ctx.stroke(lashes, with: .color(lashColor.opacity(0.8)), style: StrokeStyle(lineWidth: max(0.5, R * 0.014), lineCap: .round))
+    }
+
     /// A jagged bolt from `a` to `b`: four rounds of midpoint displacement, halving each round.
     private static func bolt(from a: CGPoint, to b: CGPoint) -> Path {
         var pts = [a, b]
@@ -933,6 +1019,23 @@ final class ManaSlosh {
         lastKick = kick
         vel += ((-sway * 4 - tilt) * 28 - vel * 2.2) * dt
         tilt = max(-0.6, min(0.6, tilt + vel * dt))
+    }
+}
+
+/// Blinks: quick closes every 2.5-6 s, sometimes on a hard kick. Returns how open the eye is, 0...1.
+@MainActor
+final class EyeBlink {
+    static let shared = EyeBlink()
+    private var next = 0.0, started = -10.0, lastKick = 0.0
+
+    func step(t: Double, kick: Double) -> Double {
+        if next == 0 { next = t + Double.random(in: 1...3) }
+        if kick > lastKick + 0.5 && kick > 0.8 && Double.random(in: 0...1) < 0.3 { next = min(next, t) }
+        lastKick = kick
+        if t >= next { started = t; next = t + Double.random(in: 2.5...6) }
+        let age = t - started
+        guard age < 0.22 else { return 1 }
+        return age < 0.08 ? 1 - age / 0.08 : (age - 0.08) / 0.14                  // fast close, slower open
     }
 }
 
