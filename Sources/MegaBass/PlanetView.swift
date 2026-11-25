@@ -18,7 +18,8 @@ final class PlanetSpin {
 
     // Beat following: the tempo and grid come from the engine's TempoTracker.
     private(set) var bpm = 0.0
-    private var bangFrac = 0.0, beatFrac = 0.0, lastNodAt = 0.0
+    /// The phase-locked headbang: nod (radians) and drop (points), and how hard it bangs now.
+    private var headNod = 0.0, headBob = 0.0, bangAmp = 0.0
     /// Headbang body motion, applied to the whole planet system: sideways rock and a downward bob.
     private(set) var wobble = 0.0, bob = 0.0
     private var bobV = 0.0
@@ -32,6 +33,7 @@ final class PlanetSpin {
         last = t
         if !on {
             lon = 0; omega = rate; nod = 0; nodV = 0; wobble = 0; bob = 0; bobV = 0   // off: still, icon faces you
+            headNod = 0; headBob = 0; bangAmp = 0
             return 0
         }
         if hover {
@@ -39,38 +41,34 @@ final class PlanetSpin {
             lon += (target - lon) * min(1, dt * 7)
             if abs(target - lon) < 0.002 { lon = target }
             omega = rate
-            nod *= exp(-dt * 8)
+            nod *= exp(-dt * 8); headNod *= exp(-dt * 8); headBob *= exp(-dt * 8)
             return lon
         }
         // Heavy: speed follows the song's overall intensity, 0.4-3x the base rate, over ~3 s.
         let target = rate * (0.4 + 2.6 * intensity.step(energy: energy, dt: dt))
         omega += (target - omega) * min(1, dt / 3)
         lon += omega * dt
-        // Tempo from the audio (TempoTracker): beats and half-time "bangs" in speaker time. The nod
-        // launches 0.12 s early so the spring's dip lands on the bang; the beats between get a
-        // small dip. Phases are watched for wrapping, with a refractory gap, because the tracker
-        // re-anchors its grid every half second.
+        // Tempo from the audio (TempoTracker): beats and half-time "bangs" in speaker time. The head
+        // follows the grid directly: fully down exactly on each bang (a quick swing down, a slower
+        // rise), with a smaller dip on the beats between. Read 40 ms ahead: a frame reaches the
+        // screen about that long after it is drawn.
         let loud = min(1, energy * 2.5)
         let hasTempo = beat.bpm > 0 && beat.confidence > 0.03
         bpm = hasTempo ? beat.bpm : 0
         var sway = 0.0
+        let ampTarget = hasTempo && loud > 0.08 ? (0.11 + 0.1 * loud) * (headbang ? 1.6 : 1) : 0
+        bangAmp += (ampTarget - bangAmp) * min(1, dt * 4)
         if hasTempo {
-            let p = beat.period
-            let bang = ((now + 0.12 - beat.bangAt) / (2 * p)).truncatingRemainder(dividingBy: 1)
-            let bangF = bang < 0 ? bang + 1 : bang
-            let one = ((now + 0.06 - beat.beatAt) / p).truncatingRemainder(dividingBy: 1)
-            let beatF = one < 0 ? one + 1 : one
-            if bangF < bangFrac - 0.5, now - lastNodAt > 1.2 * p, loud > 0.08 {
-                nodV += (0.9 + loud * 1.6) * (headbang ? 1.6 : 1)
-                bobV += 22 * loud
-                lastNodAt = now
-            } else if beatF < beatFrac - 0.5, now - lastNodAt > 0.6 * p, loud > 0.08 {
-                bobV += 8 * loud
-            }
-            bangFrac = bangF; beatFrac = beatF
+            let p = beat.period, at = now + 0.04
+            let bang = Self.down(at - beat.bangAt, period: 2 * p), each = Self.down(at - beat.beatAt, period: p)
+            headNod = bangAmp * bang
+            headBob = bangAmp / 0.2 * (3.5 * bang + 1.2 * each)
             sway = sin(.pi * (now - beat.bangAt) / p)       // left on one beat, right on the next
-        } else if kick > lastKick + 0.35, loud > 0.08 {
-            nodV += (0.6 + loud) * (headbang ? 1.6 : 1)     // no tempo yet: nod on the kicks
+        } else {
+            headNod *= exp(-dt * 6); headBob *= exp(-dt * 6)
+            if kick > lastKick + 0.35, loud > 0.08 {
+                nodV += (0.6 + loud) * (headbang ? 1.6 : 1) // no tempo yet: nod on the kicks
+            }
         }
         lastKick = kick
         nodV += (-70 * nod - 9 * nodV) * dt
@@ -84,7 +82,18 @@ final class PlanetSpin {
     }
 
     /// The headbang nod (radians): positive tips the planet's top toward you.
-    var pitch: Double { max(-0.45, min(0.45, nod)) }
+    var pitch: Double { max(-0.45, min(0.45, nod + headNod)) }
+    /// How far the planet system drops (points, down positive).
+    var drop: Double { bob + headBob }
+
+    /// Headbang shape against time since the nearest grid point: 1 fully down on the beat, a quick
+    /// swing down (~110 ms) and a slower rise (~240 ms).
+    static func down(_ x: Double, period: Double) -> Double {
+        var u = x.truncatingRemainder(dividingBy: period)
+        if u < 0 { u += period }
+        if u > period / 2 { u -= period }
+        return u < 0 ? exp(-pow(u / 0.11, 2)) : exp(-pow(u / 0.24, 2))
+    }
     /// How open the ring plane looks (minor/major axis), widening as the planet nods toward you.
     var ringOpen: Double { max(0.05, min(0.62, sin(0.2424 + pitch))) }
 
@@ -171,7 +180,7 @@ struct PlanetView: View, Equatable {
         if !alwaysOn {
             let s = PlanetSpin.shared
             let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            ctx.translateBy(x: c.x, y: c.y + s.bob)
+            ctx.translateBy(x: c.x, y: c.y + s.drop)
             ctx.rotate(by: .radians(s.wobble))
             ctx.translateBy(x: -c.x, y: -c.y)
         }
