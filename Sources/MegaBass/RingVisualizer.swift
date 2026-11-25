@@ -62,38 +62,38 @@ final class RingSim {
 
         // A kick bursts sparks out of the loudest part of the ridge.
         if kick > lastKick + 0.35, let peak = levels.indices.max(by: { levels[$0] < levels[$1] }) {
-            explode(at: angle(ofBand: peak, right: Bool.random()), strength: 0.55 + kick * 0.6)
+            explode(at: angle(ofBand: peak), strength: 0.55 + kick * 0.6)
         }
         lastKick = kick
     }
 
     // MARK: Geometry
 
-    /// Band i sits at an angle from 12 o'clock, mirrored left/right; bass on top.
-    func angle(ofBand i: Int, right: Bool) -> Double {
-        let n = max(2, levels.count)
-        let t = Double(i) / Double(n - 1) * .pi
-        return right ? -.pi / 2 + t : -.pi / 2 - t
+    /// One lap, not a mirror: bass at 12 o'clock, rising clockwise through the mids to the highs,
+    /// and the highs close back into the bass at the top.
+    func angle(ofBand i: Int) -> Double {
+        -.pi / 2 + Double(i) / Double(max(1, levels.count)) * 2 * .pi
     }
 
-    /// Level at an angle (interpolated band), 0...1.
-    func level(at th: Double) -> Double {
-        guard levels.count > 1 else { return 0 }
-        var a = th + .pi / 2                                   // 0 at top
-        a = a.truncatingRemainder(dividingBy: 2 * .pi); if a < 0 { a += 2 * .pi }
-        let t = (a <= .pi ? a : 2 * .pi - a) / .pi              // 0 top ... 1 bottom, mirrored
-        let x = t * Double(levels.count - 1)
-        let i = min(levels.count - 2, Int(x)), f = x - Double(i)
-        return levels[i] * (1 - f) + levels[i + 1] * f
+    /// Position around the ring, 0 at 12 o'clock to 1 just before it, clockwise.
+    func lap(_ th: Double) -> Double {
+        var a = (th + .pi / 2).truncatingRemainder(dividingBy: 2 * .pi)
+        if a < 0 { a += 2 * .pi }
+        return a / (2 * .pi)
     }
 
-    func heat(at th: Double) -> Double {
-        guard heat.count > 1 else { return 0 }
-        var a = th + .pi / 2
-        a = a.truncatingRemainder(dividingBy: 2 * .pi); if a < 0 { a += 2 * .pi }
-        let t = (a <= .pi ? a : 2 * .pi - a) / .pi
-        return heat[min(heat.count - 1, Int((t * Double(heat.count - 1)).rounded()))]
+    /// Interpolates a per-band array around the lap, wrapping highest into lowest at the seam.
+    private func sample(_ v: [Double], _ th: Double) -> Double {
+        guard v.count > 1 else { return 0 }
+        let x = lap(th) * Double(v.count)
+        let i = Int(x) % v.count, f = x - Double(Int(x))
+        return v[i] * (1 - f) + v[(i + 1) % v.count] * f
     }
+
+    /// Level at an angle, 0...1.
+    func level(at th: Double) -> Double { sample(levels, th) }
+
+    func heat(at th: Double) -> Double { sample(heat, th) }
 
     /// The ridge's radius at an angle.
     func surface(_ th: Double) -> Double { base + pow(max(0, min(1, level(at: th))), 0.85) * depth }
@@ -225,7 +225,7 @@ struct RingVisualizer: View {
             let lv = sim.level(at: th)
             let tip = sim.surface(th), rise = tip - sim.base
             guard rise > 0.4 else { continue }
-            let fraction = abs(sin((th + .pi / 2) / 2))
+            let fraction = sim.lap(th)
             let rate = 0.6 * pow(45 * pow(10000.0 / 45, fraction) / 45, 0.32)
             let sway = sin(sim.clock * .pi * 2 * rate + Double(i) * 2.39996323) * min(1.1, rise * 0.14) / sim.base
             var p = Path()
