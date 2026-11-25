@@ -125,19 +125,20 @@ struct PowerRing: View {
         ZStack {
             // vizamp's particle ridge, bent into a circle.
             RingVisualizer(engine: engine)
+                .frame(width: 280, height: 280)          // sparks fly past the hero's box; layout stays 168
             Button(action: { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } }) {
                 ZStack {
                     Circle()
                         .fill(engine.enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.panel))
                     Circle()
-                        .strokeBorder(engine.enabled ? Color.white.opacity(0.25) : Color.white.opacity(0.1), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(engine.enabled ? 0.18 : 0.08), lineWidth: 0.5)
                     Image(systemName: "power")
                         .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(engine.enabled ? .white : Theme.secondary)
                 }
                 .frame(width: 96, height: 96)
                 .scaleEffect(1 + 0.04 * engine.kickPulse)
-                .shadow(color: engine.enabled ? Theme.hot.opacity(0.35 + 0.35 * engine.kickPulse) : .clear, radius: 20)
+                .shadow(color: engine.enabled ? Theme.hot.opacity(0.3 + 0.35 * engine.kickPulse) : .clear, radius: 10)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")

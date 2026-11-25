@@ -27,9 +27,10 @@ final class RingSim {
     private var rng = SystemRandomNumberGenerator()
 
     /// Geometry, in points from the ring centre.
-    let base: Double = 57          // ridge baseline, just outside the 96 pt button
-    let depth: Double = 23         // how far a full-scale band reaches outward
-    let outer: Double = 82         // grains stay inside the frame
+    let base: Double = 51          // ridge baseline, hugging the 96 pt button
+    let depth: Double = 24         // how far a full-scale band reaches outward
+    let escape: Double = 135       // grains flying past this are recycled
+    let fadeFrom: Double = 82      // and fade out from here
 
     func rand(_ a: Double, _ b: Double) -> Double { Double.random(in: a...b, using: &rng) }
 
@@ -57,8 +58,9 @@ final class RingSim {
         }
         prior = levels
 
-        if grains.isEmpty { grains = (0..<140).map { _ in newGrain(rest: true) } }
+        if grains.isEmpty { grains = (0..<260).map { _ in newGrain(rest: true) } }
         advanceGrains(dt)
+        radiate(dt)
 
         // A kick bursts sparks out of the loudest part of the ridge.
         if kick > lastKick + 0.35, let peak = levels.indices.max(by: { levels[$0] < levels[$1] }) {
@@ -109,7 +111,7 @@ final class RingSim {
     }
 
     private func advanceGrains(_ dt: Double) {
-        let gravity = 155.0
+        let gravity = 70.0                                        // light: sparks drift out before falling
         for i in grains.indices {
             var g = grains[i]
             g.age += dt
@@ -132,7 +134,7 @@ final class RingSim {
                 g.vr = max(-72, g.vr - gravity * dt)
                 g.r += g.vr * dt
                 g.th += g.vt * dt / max(20, g.r)
-                if g.r > outer { g.r = outer; g.vr = min(0, g.vr) }
+                if g.r > escape { grains[i] = newGrain(rest: false); continue }
                 let land = surface(g.th) + g.size / 2
                 if g.r <= land, g.vr < rising {
                     g.r = land
@@ -148,12 +150,30 @@ final class RingSim {
 
     private func explode(at th: Double, strength: Double) {
         let nearest = grains.indices.sorted { angularDistance(grains[$0].th, th) < angularDistance(grains[$1].th, th) }
-        for i in nearest.prefix(6 + Int(strength * 4)) {
-            grains[i].vr = (rand(28, 50) * min(1.4, strength)) / 1.5
+        for i in nearest.prefix(14 + Int(strength * 10)) {
+            grains[i].vr = rand(45, 95) * min(1.4, strength)
             grains[i].vt = rand(-30, 30)
             grains[i].air = true
             grains[i].spark = rand(0.2, 0.34)
         }
+    }
+
+    /// Hot bands shed embers straight outward (vizamp's radiate), a few per second per hot zone.
+    private var radiateClock = 0.0
+    private func radiate(_ dt: Double) {
+        radiateClock -= dt
+        guard radiateClock <= 0, !levels.isEmpty else { return }
+        radiateClock = rand(0.04, 0.09)
+        let hot = levels.indices.filter { heat[$0] > 0.25 && levels[$0] > 0.15 }
+        guard let band = hot.randomElement(), let i = grains.indices.filter({ !grains[$0].air }).randomElement() else { return }
+        let th = angle(ofBand: band) + rand(-0.06, 0.06)
+        grains[i].th = th
+        grains[i].r = surface(th) + 0.5
+        grains[i].vr = rand(30, 70) * (0.5 + heat[band])
+        grains[i].vt = rand(-6, 6)
+        grains[i].air = true
+        grains[i].spark = rand(0.15, 0.3)
+        grains[i].drawn = false
     }
 
     private func angularDistance(_ a: Double, _ b: Double) -> Double {
@@ -203,7 +223,7 @@ struct RingVisualizer: View {
     private func drawIdle(_ ctx: GraphicsContext, _ c: CGPoint) {
         for i in 0..<48 {
             let th = Double(i) / 48 * 2 * .pi
-            var p = Path(); p.move(to: pt(c, th, 60)); p.addLine(to: pt(c, th, 65))
+            var p = Path(); p.move(to: pt(c, th, 54)); p.addLine(to: pt(c, th, 59))
             ctx.stroke(p, with: .color(.white.opacity(0.12)), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
         }
     }
@@ -250,7 +270,7 @@ struct RingVisualizer: View {
             let lv = sim.level(at: g.th)
             let color = g.spark > 0 ? Heat.color(min(0.7, 0.35 + g.spark)) : Heat.color(0.3 + sim.heat(at: g.th) * 0.8)
             let visibility = g.spark > 0 ? 0.9 * min(1, g.spark / 0.12) : floorFade(lv) * (g.air ? 0.85 : 0.4)
-            let fade = min(1, g.age / 0.15)
+            let fade = min(1, g.age / 0.15) * max(0, min(1, (sim.escape - g.r) / (sim.escape - sim.fadeFrom)))
             let size = g.size + (g.spark > 0 ? 0.6 : 0)
             if g.drawn, hypot(p.x - g.px, p.y - g.py) > 0.3, hypot(p.x - g.px, p.y - g.py) < 12 {
                 var s = Path(); s.move(to: CGPoint(x: g.px, y: g.py)); s.addLine(to: p)
