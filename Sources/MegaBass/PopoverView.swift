@@ -19,11 +19,15 @@ struct PopoverView: View {
     @ObservedObject private var theme = ThemeAnimator.shared
 
     private var paletteKey: String { hub.active.rawValue + ":" + hub.cliamp.station }
+    /// One planet per cliamp station; per track for Spotify and Music.
+    private var planetKey: String {
+        hub.active == .cliamp ? "cliamp:" + (hub.cliamp.station.isEmpty ? "megabass" : hub.cliamp.station) : hub.active.rawValue + ":" + hub.now.title
+    }
 
     var body: some View {
         VStack(spacing: 14) {
             header
-            PowerRing(engine: engine)
+            PowerRing(engine: engine, planet: PlanetStyle.from(planetKey))
                 .padding(.top, 4)
             if !hub.installedSources.isEmpty { NowPlaying(hub: hub, player: hub.cliamp) }
             if engine.needsPermission { permissionRow }
@@ -125,6 +129,7 @@ struct PopoverView: View {
 /// The hero: a power button wrapped in a ring of ticks that pulse with the bass.
 struct PowerRing: View {
     @ObservedObject var engine: Engine
+    var planet = PlanetStyle.from("megabass")
     @Environment(\.themeTick) private var themeTick
     private let ticks = 48
 
@@ -137,8 +142,8 @@ struct PowerRing: View {
                 ZStack {
                     // A small gas giant with an atmosphere; the halo spills past the 96 pt hit area.
                     // The power icon lives on the planet's surface (see PlanetSpin).
-                    PlanetView(engine: engine, radius: 48)
-                        .frame(width: 124, height: 124)
+                    PlanetView(engine: engine, radius: 48, style: planet)
+                        .frame(width: 164, height: 164)
                 }
                 .frame(width: 96, height: 96)
                 .contentShape(Circle())
@@ -146,6 +151,7 @@ struct PowerRing: View {
             }
             .buttonStyle(.plain)
             .onHover { PlanetSpin.shared.hover = $0 }
+            .help("Planet " + planet.definition)
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")
         }
         .frame(width: 168, height: 168)

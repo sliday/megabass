@@ -32,6 +32,25 @@ final class RingSim {
     private var stalkPrior = [Double](repeating: 0, count: RingSim.stalks)
     private var stalkCooldown = [Double](repeating: 0, count: RingSim.stalks)
     func stalkAngle(_ i: Int) -> Double { -.pi / 2 + Double(i) / Double(Self.stalks) * 2 * .pi }
+
+    /// Background stars in unit coordinates (-1...1), drifting very slowly around the centre.
+    struct Star { var x: Double; var y: Double; var size: Double; var phase: Double }
+    lazy var stars: [Star] = (0..<90).map { _ in
+        Star(x: rand(-1, 1), y: rand(-1, 1), size: rand(0.5, 1.4), phase: rand(0, 2 * .pi))
+    }
+
+    /// Light falling on the planet: pulses leaving the surface and bright sparks skimming it.
+    /// Angle and strength 0...1, strongest first.
+    func planetLights() -> [(th: Double, power: Double)] {
+        var out: [(Double, Double)] = []
+        for p in packets where p.travel < 0.4 {
+            out.append((stalkAngle(p.stalk), p.energy * (1 - p.travel / 0.4)))
+        }
+        for g in grains where g.air && g.glow > 0.3 && g.r < base + 16 {
+            out.append((g.th, g.glow * 0.35 * (1 - (g.r - base) / 16)))
+        }
+        return Array(out.sorted { $0.1 > $1.1 }.prefix(24)).map { (th: $0.0, power: $0.1) }
+    }
     private var prior: [Double] = []
     var grains: [Grain] = []
     var clock: Double = 0
@@ -256,7 +275,7 @@ final class RingSim {
 
     // MARK: MilkDrop feedback
 
-    /// MilkDrop's core trick: each frame redraws the previous one slightly zoomed and rotated, faded,
+    /// MilkDrop's core trick: each frame redraws the previous one slightly zoomed (radial expansion only), faded,
     /// then adds the new shapes, so everything leaves a swirling tunnel of echoes. Kept at 1x
     /// (soft, like MilkDrop) in an offscreen bitmap the size of the visualizer.
     private var feedback: CGContext?
@@ -273,14 +292,13 @@ final class RingSim {
         let w = CGFloat(n), c = CGPoint(x: w / 2, y: w / 2)
         let bass = levels.prefix(max(1, levels.count / 5)).reduce(0, +) / Double(max(1, levels.count / 5))
 
-        // 1. The previous frame, zoomed out from the centre and turned, faded.
+        // 1. The previous frame, expanded radially from the centre, faded.
         let prev = fb.makeImage()
         fb.clear(CGRect(x: 0, y: 0, width: w, height: w))
         if let prev {
             fb.saveGState()
             fb.interpolationQuality = .low
             fb.translateBy(x: c.x, y: c.y)
-            fb.rotate(by: CGFloat((0.004 + bass * 0.022) * (sin(clock * 0.17) >= 0 ? 1 : -1)))
             let zoom = CGFloat(1.012 + bass * 0.03)
             fb.scaleBy(x: zoom, y: zoom)
             fb.translateBy(x: -c.x, y: -c.y)
@@ -380,7 +398,19 @@ struct RingVisualizer: View {
         let angles = (0...steps).map { -Double.pi / 2 + Double($0) / Double(steps) * 2 * .pi }
         let ridge = angles.map { pt(c, $0, sim.surface($0)) }
 
-        // MilkDrop layer underneath: the swirling, zooming echoes of past frames.
+        // Stars: outside the MilkDrop loop so they never smear; twinkle and drift around the planet.
+        let starSpin = sim.clock * 0.006
+        for s in sim.stars {
+            let x = s.x * cos(starSpin) - s.y * sin(starSpin), y = s.x * sin(starSpin) + s.y * cos(starSpin)
+            let p = CGPoint(x: c.x + x * c.x, y: c.y + y * c.y)
+            let d = hypot(p.x - c.x, p.y - c.y)
+            guard d > sim.base + 4 else { continue }
+            let edge = max(0, min(1, (c.x - d) / 30))            // fade toward the square's edge
+            let a = (0.25 + 0.25 * sin(sim.clock * 1.3 + s.phase)) * edge
+            ctx.fill(Path(ellipseIn: CGRect(x: p.x - s.size / 2, y: p.y - s.size / 2, width: s.size, height: s.size)), with: .color(.white.opacity(a)))
+        }
+
+        // MilkDrop layer underneath: echoes of past frames expanding outward.
         if let echo = sim.feedbackFrame(ridge: ridge, size: CGSize(width: c.x * 2, height: c.y * 2), hot: Theme.hot, heat: Theme.heat) {
             ctx.draw(Image(decorative: echo, scale: 1), in: CGRect(x: 0, y: 0, width: c.x * 2, height: c.y * 2))
         }

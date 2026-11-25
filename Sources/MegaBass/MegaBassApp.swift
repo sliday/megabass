@@ -53,7 +53,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if args.contains("--preview") {
+        if args.contains("--gallery") {
+            // Every planet type, lit, for review.
+            let grid = VStack(spacing: 8) {
+                ForEach(0..<3, id: \.self) { row in
+                    HStack(spacing: 8) {
+                        ForEach(Array(PlanetStyle.Kind.allCases.enumerated()).filter { $0.offset / 4 == row }, id: \.offset) { _, k in
+                            VStack(spacing: 2) {
+                                PlanetView(engine: self.engine, radius: 40, style: PlanetStyle.sample(k), alwaysOn: true).frame(width: 140, height: 140)
+                                Text(k.rawValue).font(.system(size: 11, weight: .medium)).foregroundStyle(.white)
+                            }
+                        }
+                    }
+                }
+            }.padding(12).background(Color(red: 0.04, green: 0.04, blue: 0.06))
+            let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            w.title = "megabass planets"
+            w.contentView = NSHostingView(rootView: grid)
+            w.setContentSize(w.contentView!.fittingSize)
+            w.center(); w.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            preview = w
+        } else if args.contains("--preview") {
             let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "megabass"
             w.contentView = NSHostingView(rootView: PopoverView(engine: engine, hub: hub))
