@@ -23,6 +23,17 @@ Click the power button. The ring pulses with the bass and the trackpad starts to
 | **Intensity** | How hard the motor works. |
 | **Now playing** | Shows cliamp's track and controls it (previous, play/pause, next). If cliamp is idle, **Play** starts one of your playlists through its headless daemon. |
 
+## The planet
+
+The power button is a small procedural world, hashed from the station (or the Spotify/Music song):
+12 types (gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno,
+star), fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
+react to the music. Around it, vizamp's particle ridge bent into a circle, pulses up the stalks,
+sparks under the planet's gravity and a MilkDrop feedback layer that leans toward your cursor.
+Hover the planet for its style code. `--gallery` shows every type.
+
+<p align="center"><img src="shots/planets.png" width="560" alt="All megabass planet types: gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno and star"></p>
+
 Can't see the menu-bar icon? A menu-bar manager such as Bartender, or the notch, may hide it.
 Open megabass again from Spotlight, Alfred or Finder and its panel appears as a floating window.
 
