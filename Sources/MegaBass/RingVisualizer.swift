@@ -123,8 +123,8 @@ final class RingSim {
             let rising = (ground - g.ground) / dt                 // outward speed of the ridge here
             if !g.air {
                 if rising > 7 {
-                    let kick = min(65, rising * 1.1 + 4)
-                    g.air = true; g.vr = kick / 1.5; g.vt = rand(-0.18, 0.18) * kick
+                    let kick = min(110, rising * 1.8 + 8)
+                    g.air = true; g.vr = kick; g.vt = rand(-0.18, 0.18) * kick
                 } else if g.ground - ground > 0.45 {
                     g.air = true; g.vr = 0
                 } else {
@@ -153,8 +153,8 @@ final class RingSim {
     private func explode(at th: Double, strength: Double) {
         let nearest = grains.indices.sorted { angularDistance(grains[$0].th, th) < angularDistance(grains[$1].th, th) }
         for i in nearest.prefix(14 + Int(strength * 10)) {
-            grains[i].vr = rand(45, 95) * min(1.4, strength)
-            grains[i].vt = rand(-30, 30)
+            grains[i].vr = rand(80, 160) * min(1.4, strength)
+            grains[i].vt = rand(-50, 50)
             grains[i].air = true
             grains[i].spark = rand(0.2, 0.34)
         }
@@ -171,7 +171,7 @@ final class RingSim {
         let th = angle(ofBand: band) + rand(-0.06, 0.06)
         grains[i].th = th
         grains[i].r = surface(th) + 0.5
-        grains[i].vr = rand(30, 70) * (0.5 + heat[band])
+        grains[i].vr = rand(60, 130) * (0.5 + heat[band])
         grains[i].vt = rand(-6, 6)
         grains[i].air = true
         grains[i].spark = rand(0.15, 0.3)
