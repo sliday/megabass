@@ -197,7 +197,7 @@ final class RingSim {
             let due = min(total, Int(Double(total) * min(1, age / 0.6)) + 1)
             let th0 = p.plume ? p.th : p.th - p.side * p.span / 2
             let vt0 = p.plume ? 8 * p.side : p.side * (30 + 60 * p.span)
-            let vr0 = (120 + 60 * p.power) * (1 + 0.1 * sin(age * 9 + p.th * 5))
+            let vr0 = (80 + 40 * p.power) * (1 + 0.1 * sin(age * 9 + p.th * 5))    // well under escape speed (~197): peaks stay within ~50 pt
             while prominences[k].emitted < due {
                 prominences[k].emitted += 1
                 sprinkles.append(Sprinkle(r: base - 1, th: th0 + rand(-0.004, 0.004), vr: vr0 * rand(0.96, 1.04),

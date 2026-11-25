@@ -117,6 +117,17 @@ final class PlanetTexture: @unchecked Sendable {
             return (RGB(s * cos(a), s * sin(a), z), Float(pow(r.unit(), 2.2) * 0.16 + 0.015))
         }
         let tint: Float = 0.12
+        // A detail layer from another noise family, multiplied in for variety (its own hash, so the
+        // rest of the style stays as it was): cells, veins, marble, strata or speckle.
+        var lr = PlanetStyle.SplitMix64(state: PlanetStyle.fnv1a(st.key + "layer"))
+        let layerPick = lr.unit()
+        let layer: Int = switch st.kind {
+        case .star: 0
+        case .gasGiant: layerPick < 0.4 ? 0 : (layerPick < 0.7 ? 3 : 4)
+        default: layerPick < 0.2 ? 0 : 1 + Int(min(4.999, (layerPick - 0.2) / 0.8 * 5))
+        }
+        let layerMix = Float(lr.range(0.3, 0.6)), layerFreq = Float(lr.range(2.5, 6))
+        let layerOff = Float(lr.range(0, 50))
 
         DispatchQueue.concurrentPerform(iterations: H) { y in
             let lat = (0.5 - (Float(y) + 0.5) / Float(H)) * .pi
@@ -205,6 +216,19 @@ final class PlanetTexture: @unchecked Sendable {
                 if st.kind != .gasGiant && st.kind != .star { col = mix(col, hot, tint) }     // a hint of the station palette
                 if st.kind == .gasGiant { shine = 0.15 }
                 col = col * (0.88 + 0.24 * fine)                                                // fine grain
+                if layer > 0 {
+                    let lp = p + layerOff
+                    let d: Float
+                    switch layer {
+                    case 1: let w = worley(perm, lp, freq: layerFreq); d = smooth(0, 0.12, w.1 - w.0)          // cells
+                    case 2: d = 1 - ridged(perm, q + layerOff, octaves: 3, freq: layerFreq)                   // veins
+                    case 3: d = 0.5 + 0.5 * sin(layerFreq * (p.z * 2 + fbm(perm, q + layerOff, octaves: 3, freq: 2) * 5))   // marble
+                    case 4: d = fbm(perm, SIMD3(lp.x * 0.5, lp.y * 0.5, lp.z * 7), octaves: 4, freq: layerFreq * 0.6)       // strata
+                    default: d = smooth(0.55, 0.75, fbm(perm, lp, octaves: 3, freq: layerFreq * 4))         // speckle
+                    }
+                    col = col * ((1 - layerMix) + layerMix * (0.45 + 1.1 * d))                // multiply
+                    relief += (d - 0.5) * layerMix * 0.6
+                }
                 let i = y * W + x
                 surface[i] = col
                 glow[i] = emit
@@ -416,13 +440,15 @@ final class PlanetTextures {
                         let halo = glyphAt((gu - 0.5) * 0.8 + 0.5, (gv - 0.5) * 0.8 + 0.5) * 0.5
                             + glyphAt((gu - 0.5) * 0.65 + 0.5, (gv - 0.5) * 0.65 + 0.5) * 0.25
                         out += iconLight * halo * (1 - a) * 0.55
-                        if a > 0.01 { out = out + (iconBase * 1.15 - out) * a }
+                        // Screen blend: the glyph only ever adds light, never greys the surface under it.
+                        if a > 0.01 { out = SIMD3<Float>(repeating: 1) - (SIMD3<Float>(repeating: 1) - out) * (SIMD3<Float>(repeating: 1) - simd_min(iconBase * 1.15, SIMD3<Float>(repeating: 1)) * a) }
                     } else {
                         let shadow = glyphAt(gu - 0.035, gv - 0.035)
                         if shadow > 0.01 { out *= 1 - shadow * 0.45 * (1 - a) }           // soft drop shadow
                         if a > 0.01 {
                             let lam = max(0, (simd_dot(nrm, L) + 0.25) / 1.25)
-                            out = out + (iconBase * (0.3 + 0.75 * lam) - out) * a * 0.94
+                            let ink = simd_min(iconBase * (0.3 + 0.75 * lam), SIMD3<Float>(repeating: 1)) * a * 0.94
+                            out = SIMD3<Float>(repeating: 1) - (SIMD3<Float>(repeating: 1) - out) * (SIMD3<Float>(repeating: 1) - ink)   // screen
                         }
                     }
                 }
