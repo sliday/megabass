@@ -585,7 +585,8 @@ struct RingVisualizer: View {
             if tmp > 0.35 {
                 bloom.stroke(seg, with: .color(col.opacity(0.22 * min(1, tmp))), style: StrokeStyle(lineWidth: (1.4 + tmp * 4.6) * 3, lineCap: .round))
             }
-            ctx.stroke(seg, with: .color(col.opacity(alpha)), style: StrokeStyle(lineWidth: 1.4 + tmp * 4.6, lineCap: .round))
+            // Additive: light only adds, so cold (dark) metal never draws a dark seam over the glow.
+            bloom.stroke(seg, with: .color(col.opacity(alpha)), style: StrokeStyle(lineWidth: 1.4 + tmp * 4.6, lineCap: .round))
         }
         // Tiny sparkles from mega hits: white-hot streaks.
         for s in sim.sparkles {
