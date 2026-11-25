@@ -107,6 +107,23 @@ final class NowPlayingHub: ObservableObject {
     // MARK: Control
 
     func toggle() { control(active, cliampCmd: { $0.toggle() }, script: "playpause") }
+
+    /// While you drag the progress line: the fraction under the pointer (nil when not scrubbing).
+    @Published var scrub: Double?
+
+    /// Seeks the active player to `fraction` of the track.
+    func seek(fraction: Double) {
+        let d = now.duration
+        guard d > 0 else { return }
+        let target = max(0, min(d - 0.5, fraction * d))
+        if active == .cliamp {
+            cliamp.seek(to: target)
+        } else {
+            Self.run(active, "set player position to \(String(format: "%.2f", target))")
+            if var snap = others[active] { snap.position = target; others[active] = snap }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.poll() }
+    }
     func next() { control(active, cliampCmd: { $0.next() }, script: "next track") }
     func prev() { control(active, cliampCmd: { $0.prev() }, script: "previous track") }
 

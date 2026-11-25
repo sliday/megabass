@@ -45,6 +45,11 @@ final class CliampBridge: ObservableObject {
     }
 
     func toggle() { command(["toggle"]) }
+    /// Jumps to an absolute position (seconds).
+    func seek(to seconds: Double) {
+        position = seconds
+        command(["remote", "call", "seek.absolute", "--params", "{\"value\":\(max(0, seconds))}", "--wait"])
+    }
     func next() { command(["next"]) }
     func prev() { command(["prev"]) }
 

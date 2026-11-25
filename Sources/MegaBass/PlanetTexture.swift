@@ -232,6 +232,31 @@ final class PlanetTextures {
     private var mapKey = ""
     private var latIdx: [Int32] = [], lonBase: [Float] = [], light: [Float] = [], inside: [Bool] = []
     private var normal: [SIMD3<Float>] = [], east: [SIMD3<Float>] = [], north: [SIMD3<Float>] = [], cosLat: [Float] = []
+    private var latF: [Float] = []
+
+    /// The power glyph as an alpha bitmap, drawn once; the renderer wraps it onto the sphere.
+    private static let glyphSize = 128
+    private lazy var glyph: [Float] = {
+        let n = Self.glyphSize
+        var px = [UInt8](repeating: 0, count: n * n)
+        let cfg = NSImage.SymbolConfiguration(pointSize: CGFloat(n) * 0.78, weight: .bold)
+        guard let img = NSImage(systemSymbolName: "power", accessibilityDescription: nil)?.withSymbolConfiguration(cfg),
+              let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let ctx = CGContext(data: &px, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return [Float](repeating: 0, count: n * n) }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height), k = min(CGFloat(n) * 0.86 / w, CGFloat(n) * 0.86 / h)
+        let r = CGRect(x: (CGFloat(n) - w * k) / 2, y: (CGFloat(n) - h * k) / 2, width: w * k, height: h * k)
+        ctx.clip(to: r, mask: cg)
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.fill(r)
+        return px.map { Float($0) / 255 }
+    }()
+
+    @inline(__always) private func glyphAt(_ u: Float, _ v: Float) -> Float {
+        let n = Self.glyphSize
+        guard u >= 0, u < 1, v >= 0, v < 1 else { return 0 }
+        return glyph[Int(v * Float(n)) * n + Int(u * Float(n))]
+    }
     private var pixels: [UInt32] = []
     private var side = 0
 
@@ -269,7 +294,7 @@ final class PlanetTextures {
     /// `rim`: atmosphere colour at the limb. `grade`: the palette pair the surface is toned toward.
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
-                flares: [(th: Double, power: Double)] = [], flareColor: Color = .white) -> CGImage? {
+                flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let key = "\(n)|\(tilt)"
         if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
@@ -290,6 +315,11 @@ final class PlanetTextures {
         // Colour grade: split-tone shadows toward the darkened first palette colour, highlights
         // toward the second, keeping luminance, so the planet sits inside the station's theme.
         let gradeLo = grade.map { Self.rgb($0.0) * 0.55 }, gradeHi = grade.map { Self.rgb($0.1) }
+        // Power-icon decal on the equator at texture longitude 0: it turns with the surface, bends
+        // over the sphere, and is counter-rotated by the tilt so it stays upright on screen.
+        let iconHalf: Float = 0.46
+        let tiltC = Float(cos(tilt)), tiltS = Float(sin(tilt))
+        let iconBase: SIMD3<Float> = on ? SIMD3(0.97, 0.97, 0.99) : SIMD3(0.62, 0.62, 0.64)
         for i in 0..<(n * n) {
             guard inside[i] else { pixels[i] = 0; continue }
             let u0 = lonBase[i]
@@ -345,6 +375,27 @@ final class PlanetTextures {
                 emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
             }
             out += emitted
+            if icon {
+                // Longitude on the texture, relative to the decal, wrapped to -pi...pi.
+                var dl = (lonBase[i] + shift) / Float(W) * 2 * .pi
+                dl = dl - (2 * .pi) * floor((dl + .pi) / (2 * .pi))
+                let lat = latF[i]
+                if abs(dl) < iconHalf * 1.6, abs(lat) < iconHalf * 1.6 {
+                    let ex = dl * cosLat[i], ny2 = lat
+                    let gx = ex * tiltC + ny2 * tiltS, gy = -ex * tiltS + ny2 * tiltC     // upright on screen
+                    let gu = gx / (2 * iconHalf) + 0.5, gv = 0.5 - gy / (2 * iconHalf)
+                    let a = glyphAt(gu, gv)
+                    let shadow = glyphAt(gu - 0.035, gv - 0.035)
+                    if shadow > 0.01 { out *= 1 - shadow * 0.45 * (1 - a) }               // soft drop shadow
+                    if a > 0.01 {
+                        // Raised enamel: lit by the sun (smooth normal) with a small glint.
+                        let lam = max(0, (simd_dot(nrm, L) + 0.25) / 1.25)
+                        var badge = iconBase * (0.3 + 0.75 * lam)
+                        badge += SIMD3<Float>(repeating: pow(max(0, simd_dot(nrm, half)), 24) * 0.5)
+                        out = out + (badge - out) * a * 0.94
+                    }
+                }
+            }
             if !on {
                 let g = (out.x + out.y + out.z) / 3 * 0.45
                 out = SIMD3(repeating: g)
@@ -366,6 +417,7 @@ final class PlanetTextures {
         light = .init(repeating: 0, count: n * n); inside = .init(repeating: false, count: n * n)
         normal = .init(repeating: .zero, count: n * n); east = .init(repeating: .zero, count: n * n)
         north = .init(repeating: .zero, count: n * n); cosLat = .init(repeating: 1, count: n * n)
+        latF = .init(repeating: 0, count: n * n)
         pixels = .init(repeating: 0, count: n * n)
         let L = simd_normalize(SIMD3<Float>(-0.45, -0.5, 0.74))          // light from top-left, toward the viewer
         let ct = Float(cos(-tilt)), stl = Float(sin(-tilt))
@@ -392,6 +444,7 @@ final class PlanetTextures {
                 func back(_ v: SIMD3<Float>) -> SIMD3<Float> { SIMD3(v.x * ct + v.y * stl, -v.x * stl + v.y * ct, v.z) }
                 east[i] = back(eP); north[i] = back(nP)
                 cosLat[i] = ca
+                latF[i] = lat
             }
         }
     }

@@ -140,7 +140,8 @@ struct PlanetView: View {
         if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
                                                   rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
-                                                  flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35)) {
+                                                  flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35),
+                                                  icon: true) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -242,7 +243,7 @@ struct PlanetView: View {
         // The power icon, a feature on the equator: foreshortened toward the limb, hidden round the back.
         let iconLon = spin
         let facing = cos(iconLon)
-        if facing > 0 {
+        if facing > 0 && !textured {                  // textured planets carry the icon as a surface decal
             var icon = ctx
             icon.clip(to: disc)
             icon.translateBy(x: c.x + sin(iconLon) * R * 0.88, y: c.y)

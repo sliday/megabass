@@ -442,18 +442,41 @@ struct NowPlaying: View {
             }
             // Full-width progress, times at both ends (Control Center style).
             if now.running && now.duration > 0 {
+                // Click or drag the line to seek; it thickens and previews the time while you scrub.
+                let shown = hub.scrub ?? min(1, now.position / now.duration)
+                let pos = shown * now.duration
                 VStack(spacing: 3) {
                     GeometryReader { g in
+                        let barH: CGFloat = hub.scrub == nil ? 3 : 6
                         ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.1))
-                            Capsule().fill(Theme.accent).frame(width: g.size.width * min(1, now.position / now.duration))
+                            Capsule().fill(Color.white.opacity(0.1)).frame(height: barH)
+                            Capsule().fill(Theme.accent).frame(width: g.size.width * shown, height: barH)
+                            if hub.scrub != nil {
+                                Circle().fill(.white).frame(width: 10, height: 10).offset(x: g.size.width * shown - 5)
+                            }
                         }
+                        .frame(height: 14)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0)
+                            .onChanged { d in hub.scrub = max(0, min(1, d.location.x / max(1, g.size.width))) }
+                            .onEnded { d in
+                                hub.seek(fraction: max(0, min(1, d.location.x / max(1, g.size.width))))
+                                hub.scrub = nil
+                            })
+                        .animation(.easeOut(duration: 0.12), value: hub.scrub == nil)
                     }
-                    .frame(height: 3)
+                    .frame(height: 14)
+                    .accessibilityElement()
+                    .accessibilityLabel("Playback position")
+                    .accessibilityValue(Self.time(pos) + " of " + Self.time(now.duration))
+                    .accessibilityAdjustableAction { dir in
+                        hub.seek(fraction: min(1, max(0, shown + (dir == .increment ? 0.05 : -0.05))))
+                    }
+                    .help("Click or drag to jump in the song")
                     HStack {
-                        Text(Self.time(now.position))
+                        Text(Self.time(pos))
                         Spacer()
-                        Text("-" + Self.time(max(0, now.duration - now.position)))
+                        Text("-" + Self.time(max(0, now.duration - pos)))
                     }
                     .font(.system(size: 9, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.secondary)
