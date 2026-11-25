@@ -20,6 +20,9 @@ final class PlanetSpin {
     private(set) var bpm = 0.0
     /// The phase-locked headbang: nod (radians) and drop (points), and how hard it bangs now.
     private var headNod = 0.0, headBob = 0.0, bangAmp = 0.0
+    /// The planet's own beat clock (0..<1 per two beats), eased toward the tracker's grid, and the
+    /// tracker's confidence, smoothed: an unclear beat fades the headbang out instead of jerking.
+    private var bangPhase = 0.0, sureness = 0.0
     /// Headbang body motion, applied to the whole planet system: sideways rock and a downward bob.
     private(set) var wobble = 0.0, bob = 0.0
     private var bobV = 0.0
@@ -56,19 +59,33 @@ final class PlanetSpin {
         let hasTempo = beat.bpm > 0 && beat.confidence > 0.03
         bpm = hasTempo ? beat.bpm : 0
         var sway = 0.0
-        let ampTarget = hasTempo && loud > 0.08 ? (0.11 + 0.1 * loud) * (headbang ? 1.6 : 1) : 0
-        bangAmp += (ampTarget - bangAmp) * min(1, dt * 4)
+        // How sure the beat is (~1.5 s smoothing): below ~0.05 confidence the head stays still.
+        let sure = hasTempo ? max(0, min(1, (beat.confidence - 0.05) / 0.08)) : 0
+        sureness += (sure - sureness) * min(1, dt / 1.5)
+        var ampTarget = loud > 0.08 ? (0.11 + 0.1 * loud) * (headbang ? 1.6 : 1) * sureness : 0
         if hasTempo {
-            let p = beat.period, at = now + 0.04
-            let bang = Self.down(at - beat.bangAt, period: 2 * p), each = Self.down(at - beat.beatAt, period: p)
+            let p = beat.period
+            // Own clock: run at the tracked tempo and ease toward the tracker's grid over ~0.3 s, so a
+            // re-anchored or flipped grid never snaps the head; a big correction also eases the nod off.
+            let target = ((now - beat.bangAt) / (2 * p)).truncatingRemainder(dividingBy: 1)
+            var err = target - bangPhase
+            err -= err.rounded()                                    // -0.5 ... 0.5
+            if abs(err) > 0.2 { ampTarget *= 0.3 }
+            bangPhase += dt / (2 * p) + err * min(1, dt * 3.3)
+            bangPhase -= bangPhase.rounded(.down)
+            let at = 0.04 / (2 * p)                                  // a frame reaches the screen ~40 ms later
+            var u = bangPhase + at
+            u -= u.rounded()                                         // -0.5 ... 0.5 of a bang period
+            var v = 2 * (bangPhase + at)
+            v -= v.rounded()                                         // -0.5 ... 0.5 of a beat
+            let bang = Self.down(u * 2 * p, period: 2 * p), each = Self.down(v * p, period: p)
+            bangAmp += (ampTarget - bangAmp) * min(1, dt / 0.6)
             headNod = bangAmp * bang
             headBob = bangAmp / 0.2 * (3.5 * bang + 1.2 * each)
-            sway = sin(.pi * (now - beat.bangAt) / p)       // left on one beat, right on the next
+            sway = sin(2 * .pi * bangPhase) * sureness              // left on one beat, right on the next
         } else {
-            headNod *= exp(-dt * 6); headBob *= exp(-dt * 6)
-            if kick > lastKick + 0.35, loud > 0.08 {
-                nodV += (0.6 + loud) * (headbang ? 1.6 : 1) // no tempo yet: nod on the kicks
-            }
+            bangAmp += (0 - bangAmp) * min(1, dt / 0.6)
+            headNod *= exp(-dt * 3); headBob *= exp(-dt * 3)
         }
         lastKick = kick
         nodV += (-70 * nod - 9 * nodV) * dt
@@ -502,7 +519,7 @@ struct PlanetView: View, Equatable {
     private var ringOpen: Double { PlanetSpin.shared.ringOpen }
 
     /// The moons on this planet: kick moon always, shepherds on ringed planets.
-    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false; var lift = 0.0; var rocket = false }
+    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false; var lift = 0.0; var rocket = false; var energy: Double? = nil }
     private func moons(_ st: PlanetStyle, R: Double) -> [Moon] {
         let o = OrbitSim.shared
         var out = [Moon(angle: o.moonAngle, radius: R * 1.72 + o.spring, size: 3.2, glow: 0.5 + o.flash, trail: o.moonTrail, springy: true)]
@@ -511,8 +528,9 @@ struct PlanetView: View, Equatable {
             out.append(Moon(angle: o.outerAngle, radius: R * (1.18 + st.ringWidth), size: 1.6, glow: 0.3 + o.groups[5], trail: o.outerTrail))
         }
         for v in o.voiceMoons {
-            out.append(Moon(angle: v.angle, radius: v.r, size: v.size, glow: v.falling ? 0.9 : 0.4, trail: v.trail, springy: true, lift: v.lift,
-                            rocket: !v.inserted && !v.falling))
+            let energy = max(0, min(1, (v.size - 1.3) / 1.4))           // the note's strength
+            out.append(Moon(angle: v.angle, radius: v.r, size: v.size, glow: v.falling ? 0.9 : 0.25 + 0.5 * energy, trail: v.trail, springy: true,
+                            lift: v.lift, rocket: !v.inserted && !v.falling, energy: energy))
         }
         return out
     }
@@ -571,6 +589,9 @@ struct PlanetView: View, Equatable {
         g.translateBy(x: c.x, y: c.y)
         g.rotate(by: .radians(planeTilt(style)))
         for m in moons(style, R: R) {
+            // Voice satellites take their colour from the palette by the note's energy (soft notes the
+            // heat accent, strong ones the hot accent), paler for higher notes.
+            let mc = m.energy.map { mix(mix(color, Theme.hot, $0), .white, m.lift * 0.35) } ?? mix(color, .white, m.lift * 0.5)
             // Trail: the orbit the moon actually travelled (kick jumps included), drawn as continuous
             // lines, never dots. Points are filled in every 0.03 rad so fast moons follow the orbit's
             // curve; each side of the planet is one connected path; three layered strokes taper it.
@@ -588,7 +609,7 @@ struct PlanetView: View, Equatable {
                         pts.append((CGPoint(x: cos(ang) * rad, y: sin(ang) * rad * ringOpen), age / 0.9, sin(ang) >= 0))
                     }
                 }
-                let tint = mix(mix(color, .white, m.lift * 0.5), .white, orbit.speed * 0.5)
+                let tint = mix(mc, .white, orbit.speed * 0.5)
                 let strength = 0.45 + orbit.speed * 0.5
                 // Ten layers: each newer slice adds a little width and light, so the taper is smooth.
                 let layers = (0..<10).map { k -> (cut: Double, w: Double, a: Double) in
@@ -625,7 +646,7 @@ struct PlanetView: View, Equatable {
             // Faster moons shine brighter: whiter core, bigger, stronger halo.
             let fast = on ? orbit.speed : 0
             let glow = on ? m.glow + fast * 0.9 : 0.15
-            let color = mix(color, .white, m.lift * 0.5)           // voice satellites: higher notes paler
+            let color = mc
             let d = m.size * (2 + fast * 1.6)
             g.fill(Path(ellipseIn: CGRect(x: p.x - d, y: p.y - d, width: d * 2, height: d * 2)),
                    with: .radialGradient(Gradient(colors: [color.opacity(min(1, 0.35 * glow)), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
@@ -648,9 +669,6 @@ struct PlanetView: View, Equatable {
                 flash.fill(Path(ellipseIn: CGRect(x: p.x - gr, y: p.y - gr, width: gr * 2, height: gr * 2)),
                            with: .radialGradient(Gradient(colors: [Color.white.opacity(f * f), mix(color, .white, 0.4).opacity(0.6 * f), color.opacity(0)]),
                                                  center: p, startRadius: 0, endRadius: gr))
-                let rr = 3 + 22 * imp.power * (1 - f)
-                flash.stroke(Path(ellipseIn: CGRect(x: p.x - rr, y: p.y - rr * ringOpen * 2.2, width: rr * 2, height: rr * ringOpen * 4.4)),
-                             with: .color(mix(color, .white, 0.6).opacity(0.7 * f)), lineWidth: 1.4)
             }
         }
         // Impact debris: short white-hot streaks along their flight, cooling to the palette.
@@ -671,14 +689,17 @@ struct PlanetView: View, Equatable {
                               style: StrokeStyle(lineWidth: d.size, lineCap: .round))
             }
         }
-        // Shock rings from the kick moon: 0 to 10 pt over 200 ms, fading.
+        // Kicks and launches: a soft puff of light where the moon is, no outline.
         if front && on {
+            var puff = g
+            puff.blendMode = .plusLighter
             for s in orbit.shocks {
                 let age = orbit.time - s.at
                 guard age < 0.2 else { continue }
-                let r = 2 + 10 * age / 0.2
-                g.stroke(Path(ellipseIn: CGRect(x: s.x - r, y: s.y - r, width: r * 2, height: r * 2)),
-                         with: .color(Color.white.opacity(0.7 * (1 - age / 0.2))), lineWidth: 1.2)
+                let f = 1 - age / 0.2, r = 4 + 8 * age / 0.2
+                let p = CGPoint(x: s.x, y: s.y)
+                puff.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
+                          with: .radialGradient(Gradient(colors: [Color.white.opacity(0.45 * f), color.opacity(0)]), center: p, startRadius: 0, endRadius: r))
             }
         }
     }
