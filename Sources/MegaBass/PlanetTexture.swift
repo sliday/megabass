@@ -268,7 +268,8 @@ final class PlanetTextures {
     /// Renders the disc (2x resolution) into an image: texture lookup, clouds, per-pixel light, glow.
     /// `rim`: atmosphere colour at the limb. `grade`: the palette pair the surface is toned toward.
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
-                rim rimColor: Color = .white, grade: (Color, Color)? = nil) -> CGImage? {
+                rim rimColor: Color = .white, grade: (Color, Color)? = nil,
+                flares: [(th: Double, power: Double)] = [], flareColor: Color = .white) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let key = "\(n)|\(tilt)"
         if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
@@ -281,6 +282,11 @@ final class PlanetTextures {
         let half = simd_normalize(L + V)
         let rimTint = Self.rgb(rimColor)
         let star = tex.kind == .star
+        // Flares as point lights just beyond the limb, a little toward the viewer (unit-sphere space).
+        let flareTint = Self.rgb(flareColor)
+        let lights: [(pos: SIMD3<Float>, power: Float)] = flares.prefix(6).map { f in
+            (SIMD3(Float(cos(f.th)) * 1.12, Float(sin(f.th)) * 1.12, 0.3), Float(f.power))
+        }
         // Colour grade: split-tone shadows toward the darkened first palette colour, highlights
         // toward the second, keeping luminance, so the planet sits inside the station's theme.
         let gradeLo = grade.map { Self.rgb($0.0) * 0.55 }, gradeHi = grade.map { Self.rgb($0.1) }
@@ -311,6 +317,13 @@ final class PlanetTextures {
                 // Toy-like light: wrapped diffuse so the night side isn't pitch black.
                 let lam = max(0, (simd_dot(bumped, L) + 0.2) / 1.2)
                 out = c * (0.08 + 0.95 * pow(lam, 0.9))
+                // Flare light: grazing light from each flare makes the bumps pop where it lands.
+                for fl in lights {
+                    let d = fl.pos - nrm
+                    let dist2 = simd_length_squared(d)
+                    let k = max(0, simd_dot(bumped, d / sqrt(dist2))) * fl.power * 1.6 / (1 + dist2 * 6)
+                    if k > 0.002 { out += c * flareTint * k + flareTint * (k * k * 0.25) }
+                }
                 // Specular: glossy water and ice catch the sun; rock stays matte.
                 let gloss = tex.spec[row + u] * (1 - cl)
                 if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss) }

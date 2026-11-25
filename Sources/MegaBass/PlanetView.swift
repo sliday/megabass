@@ -139,7 +139,8 @@ struct PlanetView: View {
         let textured: Bool
         if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
-                                                  rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat)) {
+                                                  rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
+                                                  flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35)) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
