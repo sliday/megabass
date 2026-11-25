@@ -45,6 +45,8 @@ public final class Engine: ObservableObject {
     private let pipeline = Pipeline()
     /// The song's tempo and beat grid (speaker time, `Clock`), for the visuals.
     public var tempo: TempoTracker.Beat { pipeline.lastBeat }
+    /// Prominent voices since the last call (speaker time), for the planet's satellites.
+    public func takeVoices() -> [VoiceSpotter.Event] { pipeline.takeVoices() }
     private var meterTimer: Timer?
     private var frameTick = 0
     private var askedPermission = false
@@ -266,6 +268,10 @@ final class Pipeline: @unchecked Sendable {
     private var _spectrum: [Float] = []
     var lastSpectrum: [Float] { lock.withLock { _spectrum } }
     private var tempoTracker: TempoTracker?
+    private let voiceSpotter = VoiceSpotter()
+    private var _voices: [VoiceSpotter.Event] = []
+    /// Voices spotted since the last call (speaker time), oldest first.
+    func takeVoices() -> [VoiceSpotter.Event] { lock.withLock { defer { _voices.removeAll() }; return _voices } }
     private var _beat = TempoTracker.Beat()
     var lastBeat: TempoTracker.Beat { lock.withLock { _beat } }
     // Diagnostics, reset each read.
@@ -311,7 +317,12 @@ final class Pipeline: @unchecked Sendable {
         var nCycles = 0, nTones = 0
         if let v { cycles!.process(samples, time: host + offset) { v.push($0); nCycles += 1 } }
         if spectrumAnalyzer == nil || spectrumAnalyzer!.sampleRate != sampleRate { spectrumAnalyzer = SpectrumAnalyzer(sampleRate: sampleRate) }
-        spectrumAnalyzer!.process(samples) { bands in lock.withLock { _spectrum = bands } }
+        spectrumAnalyzer!.process(samples) { bands in
+            lock.withLock { _spectrum = bands }
+            if let e = voiceSpotter.process(bands, time: host + offset) {
+                lock.withLock { _voices.append(e); if _voices.count > 16 { _voices.removeFirst() } }
+            }
+        }
         if tempoTracker == nil || tempoTracker!.sampleRate != sampleRate { tempoTracker = TempoTracker(sampleRate: sampleRate) }
         tempoTracker!.process(samples, time: host + offset)
         let beat = tempoTracker!.beat

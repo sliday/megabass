@@ -174,7 +174,9 @@ struct PlanetView: View, Equatable {
         defer { if let p = perfStart { PerfMeter.shared.add("planet", Date().timeIntervalSince(p)) } }
         let on = engine.enabled || alwaysOn
         _ = WavePhase.shared.advance(t: t, hz: engine.hapticHz)          // rings pulse with the trackpad wave
-        OrbitSim.shared.step(t: t, kick: on ? engine.kickPulse : 0, levels: on ? RingSim.shared.levels : [], R: Double(radius), on: on)
+        if !alwaysOn { OrbitSim.shared.addVoices(engine.takeVoices()) }
+        OrbitSim.shared.step(t: t, kick: on ? engine.kickPulse : 0, levels: on ? RingSim.shared.levels : [], R: Double(radius), on: on,
+                             now: Clock.now())
         // Headbang body motion: the whole system (planet, rings, moons) rocks and bobs as one.
         var ctx = ctx
         if !alwaysOn {
@@ -267,7 +269,7 @@ struct PlanetView: View, Equatable {
         if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
                                                   rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
-                                                  flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35),
+                                                  flares: on ? RingSim.shared.planetLights() + impactLights(st) : [], flareColor: mix(heat, .white, 0.35),
                                                   icon: true, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),
                                                   blur: Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch) {
             var disc2 = ctx
@@ -484,19 +486,32 @@ struct PlanetView: View, Equatable {
 
     // MARK: Rings and moons (from the Fable brainstorm: kick moon, band-per-line rings, shepherds)
 
+    /// Satellite impacts as surface lights: the screen angle of each strike, fading over 0.8 s.
+    private func impactLights(_ st: PlanetStyle) -> [(th: Double, power: Double)] {
+        let o = OrbitSim.shared, tilt = planeTilt(st)
+        return o.impacts.map { imp in
+            let x = cos(imp.angle), y = sin(imp.angle) * ringOpen
+            let th = atan2(x * sin(tilt) + y * cos(tilt), x * cos(tilt) - y * sin(tilt))
+            return (th: th, power: 2.5 * imp.power * max(0, 1 - (o.time - imp.at) / 0.8))
+        }
+    }
+
     /// The orbital plane: the ring's tilt, or a gentler version of the axial tilt without rings.
     private func planeTilt(_ st: PlanetStyle) -> Double { st.rings ? st.ringTilt : st.tilt * 0.6 }
     /// The ring plane's opening, following the headbang nod.
     private var ringOpen: Double { PlanetSpin.shared.ringOpen }
 
     /// The moons on this planet: kick moon always, shepherds on ringed planets.
-    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false }
+    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false; var lift = 0.0 }
     private func moons(_ st: PlanetStyle, R: Double) -> [Moon] {
         let o = OrbitSim.shared
         var out = [Moon(angle: o.moonAngle, radius: R * 1.72 + o.spring, size: 3.2, glow: 0.5 + o.flash, trail: o.moonTrail, springy: true)]
         if st.rings {
             out.append(Moon(angle: o.innerAngle, radius: R * 1.18, size: 1.8, glow: 0.3 + o.groups[0], trail: o.innerTrail))
             out.append(Moon(angle: o.outerAngle, radius: R * (1.18 + st.ringWidth), size: 1.6, glow: 0.3 + o.groups[5], trail: o.outerTrail))
+        }
+        for v in o.voiceMoons {
+            out.append(Moon(angle: v.angle, radius: v.r, size: v.size, glow: v.falling ? 0.9 : 0.4, trail: v.trail, springy: true, lift: v.lift))
         }
         return out
     }
@@ -572,7 +587,7 @@ struct PlanetView: View, Equatable {
                         pts.append((CGPoint(x: cos(ang) * rad, y: sin(ang) * rad * ringOpen), age / 0.9, sin(ang) >= 0))
                     }
                 }
-                let tint = mix(color, .white, orbit.speed * 0.5)
+                let tint = mix(mix(color, .white, m.lift * 0.5), .white, orbit.speed * 0.5)
                 let strength = 0.45 + orbit.speed * 0.5
                 // Ten layers: each newer slice adds a little width and light, so the taper is smooth.
                 let layers = (0..<10).map { k -> (cut: Double, w: Double, a: Double) in
@@ -595,12 +610,29 @@ struct PlanetView: View, Equatable {
             // Faster moons shine brighter: whiter core, bigger, stronger halo.
             let fast = on ? orbit.speed : 0
             let glow = on ? m.glow + fast * 0.9 : 0.15
+            let color = mix(color, .white, m.lift * 0.5)           // voice satellites: higher notes paler
             let d = m.size * (2 + fast * 1.6)
             g.fill(Path(ellipseIn: CGRect(x: p.x - d, y: p.y - d, width: d * 2, height: d * 2)),
                    with: .radialGradient(Gradient(colors: [color.opacity(min(1, 0.35 * glow)), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
             g.fill(Path(ellipseIn: CGRect(x: p.x - m.size, y: p.y - m.size, width: m.size * 2, height: m.size * 2)),
                    with: .radialGradient(Gradient(colors: [.white, mix(color, .white, 0.3 + fast * 0.5), mix(color, .black, 0.5 - fast * 0.35)]),
                                          center: CGPoint(x: p.x - m.size * 0.4, y: p.y - m.size * 0.4), startRadius: 0, endRadius: m.size * 1.6))
+        }
+        // Satellite impacts: a flash on the face and a wide ring, fading over 0.8 s.
+        if front && on {
+            var flash = g
+            flash.blendMode = .plusLighter
+            for imp in orbit.impacts {
+                let age = orbit.time - imp.at, f = max(0, 1 - age / 0.8)
+                let p = CGPoint(x: cos(imp.angle) * R * 0.97, y: sin(imp.angle) * R * 0.97 * ringOpen)
+                let gr = 5 + 16 * imp.power * (0.4 + 0.6 * f)
+                flash.fill(Path(ellipseIn: CGRect(x: p.x - gr, y: p.y - gr, width: gr * 2, height: gr * 2)),
+                           with: .radialGradient(Gradient(colors: [Color.white.opacity(0.9 * f * f), mix(color, .white, 0.4).opacity(0.5 * f), color.opacity(0)]),
+                                                 center: p, startRadius: 0, endRadius: gr))
+                let rr = 3 + 22 * imp.power * (1 - f)
+                flash.stroke(Path(ellipseIn: CGRect(x: p.x - rr, y: p.y - rr * ringOpen * 2.2, width: rr * 2, height: rr * ringOpen * 4.4)),
+                             with: .color(mix(color, .white, 0.6).opacity(0.7 * f)), lineWidth: 1.4)
+            }
         }
         // Shock rings from the kick moon: 0 to 10 pt over 200 ms, fading.
         if front && on {
@@ -655,7 +687,7 @@ final class OrbitSim {
     var wakes: [Wake] = []
     private var springV = 0.0, lastKick = 0.0, prior = [Double](repeating: 0, count: 6)
 
-    func step(t: Double, kick: Double, levels: [Double], R: Double, on: Bool) {
+    func step(t: Double, kick: Double, levels: [Double], R: Double, on: Bool, now: Double = 0) {
         let dt = time == 0 ? 0 : min(0.1, t - time)
         time = t
         // Six band groups, low to high.
@@ -707,5 +739,62 @@ final class OrbitSim {
         }
         shocks.removeAll { t - $0.at > 0.25 }
         wakes.removeAll { t - $0.at > 0.35 }
+        stepVoices(t: t, dt: dt, now: now, R: R, on: on)
+    }
+
+    // MARK: Voice satellites
+
+    /// A satellite born from a prominent voice: launched off the face you see when the note sounds,
+    /// it climbs to an orbit set by the note's pitch, then decays and drops back onto the planet.
+    struct VoiceMoon {
+        var angle: Double, r: Double, vr = 0.0, target: Double, size: Double, lift: Double
+        var born: Double, life: Double, falling = false, trail: [Sample] = []
+    }
+    /// At most 10 in orbit; the oldest falls to make room.
+    private(set) var voiceMoons: [VoiceMoon] = []
+    /// Where satellites hit (angle on the orbital plane), for the flash and the surface light.
+    private(set) var impacts: [(at: Double, angle: Double, power: Double)] = []
+    private var pendingVoices: [VoiceSpotter.Event] = []
+
+    func addVoices(_ events: [VoiceSpotter.Event]) { pendingVoices += events }
+
+    private func stepVoices(t: Double, dt: Double, now: Double, R: Double, on: Bool) {
+        // Births when the note leaves the speakers.
+        while on, let e = pendingVoices.first, e.time <= now {
+            pendingVoices.removeFirst()
+            guard now - e.time < 1 else { continue }
+            if voiceMoons.filter({ !$0.falling }).count >= 10, let k = voiceMoons.firstIndex(where: { !$0.falling }) {
+                voiceMoons[k].falling = true
+            }
+            let a = Double.random(in: 0.35...(.pi - 0.35))            // from the face you see
+            voiceMoons.append(VoiceMoon(angle: a, r: R, target: R * (1.4 + 0.9 * e.pitch), size: 1.3 + 1.4 * e.strength,
+                                        lift: e.pitch, born: t, life: 8 + 10 * e.strength))
+            shocks.append((t, cos(a) * R, sin(a) * R * 0.24))
+        }
+        if !on { pendingVoices.removeAll() }
+        for k in voiceMoons.indices {
+            var m = voiceMoons[k]
+            if !on || t - m.born > m.life { m.falling = true }
+            if m.falling {
+                m.vr -= R * 1.2 * dt                                    // the orbit decays ever faster
+                m.r += m.vr * dt
+            } else {
+                m.r += (m.target - m.r) * min(1, dt * 2.5)
+            }
+            m.angle += dt * min(7, pace * pow(R * 1.72 / max(R, m.r), 1.5))     // Kepler: low runs fast
+            m.trail.append(Sample(angle: m.angle, radius: m.r, t: t))
+            m.trail.removeAll { t - $0.t > 0.9 }
+            voiceMoons[k] = m
+        }
+        // Impact on the face you see; a satellite still behind the planet skims round to the front.
+        for k in voiceMoons.indices.reversed() where voiceMoons[k].falling && voiceMoons[k].r <= R {
+            if sin(voiceMoons[k].angle) > 0.15 {
+                impacts.append((t, voiceMoons[k].angle, min(1, 0.5 + voiceMoons[k].size / 5)))
+                voiceMoons.remove(at: k)
+            } else {
+                voiceMoons[k].r = R; voiceMoons[k].vr = 0
+            }
+        }
+        impacts.removeAll { t - $0.at > 0.8 }
     }
 }

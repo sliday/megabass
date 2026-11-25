@@ -31,6 +31,8 @@ The power button is a small procedural world, hashed from the station (or the Sp
 star), fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
 react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
 and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
+Prominent voices (a sung or lead note) launch new satellites off its face, up to 10, orbiting at a
+height set by the note; when their time is up they fall back and strike the surface with a flash.
 Around it: vizamp's particle ridge bent into a circle, pulses up the stalks, sparks under the
 planet's gravity, stalks and ridge glowing like hot metal, and a MilkDrop feedback layer that leans
 toward your cursor. Hover the planet for its style code. `--gallery` shows every type.
@@ -68,6 +70,8 @@ The build is ad-hoc signed, so macOS may ask for the permission again after a re
 - `HapticVoice`: a high-priority thread that schedules actuations for when the speakers play
   that audio (capture time + device output latency).
 - `Motor`: the Force Touch actuator through the private MultitouchSupport framework.
+- `VoiceSpotter`: a band in 150 Hz-2 kHz that stands out of the spectrum around it, rises above its
+  own recent level and holds 100 ms; each one births a satellite.
 - `CliampBridge`: cliamp's CLI/IPC (`status --json`, `toggle`, `next`, `load`). It polls only while the panel is open.
 
 ## Checks
@@ -79,6 +83,7 @@ The build is ad-hoc signed, so macOS may ask for the permission again after a re
 | `mbcheck cycles` | sines within 1 %, bass stem ≥ 85 % on note, no dropouts | 0.01 %, 100 %, 100 % |
 | `mbcheck tones` | melody over groove ≥ 80 % on pitch, noise ≤ 5 % | 93 %, 0 % |
 | `mbcheck tempo` | demo groove played at 84-140 BPM: tempo ±0.5 BPM, beats within 30 ms, half-time bang on 1 and 3 | ≤0.29 BPM, ≤18 ms, 100 % |
+| `mbcheck voices` | a sung line over the groove births satellites, the groove alone doesn't | 80 % of notes, 1 false in 20 s, pitch order 77 % |
 | `mbcheck pitch` | bass pitch class ≥ 90 %, kick recall ≥ 90 % within 30 ms | 92.8 %, 100 % at 20 ms |
 | `mbcheck e2e 6 bass` | speakers → tap → motor, periods start within ±40 ms of the sound | +13 ms |
 | `mbcheck live bass 20` | live log of whatever the Mac plays (the calling app needs the permission) | |

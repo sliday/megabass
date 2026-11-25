@@ -364,6 +364,55 @@ case "tempo":
     print(pass ? "PASS" : "FAIL")
     exit(pass ? 0 : 1)
 
+case "voices":
+    // Voice spotter: a sung-like line (fundamental + harmonics, vibrato) over the groove must birth
+    // satellites; the groove alone must not.
+    // Bar: ≥ 70 % of the notes spawn one, at most 1 false voice in 20 s of groove, pitch order ≥ 75 % (it sets orbit and tint only).
+    let sr = 48000.0, secs = 20.0, noteLen = 1.2
+    let notes: [Double] = [220, 330, 262, 440, 294, 523, 349, 659, 392, 784, 247, 587, 196, 494, 370, 880]
+    let groove = DemoGroove.render(seconds: secs, sampleRate: sr)
+    var ph = 0.0
+    let sung: [Float] = groove.enumerated().map { i, g in
+        let t = Double(i) / sr
+        let k = Int(t / noteLen)
+        let f = notes[k % notes.count] * (1 + 0.006 * sin(2 * .pi * 5.5 * t))
+        ph += f / sr
+        let into = t - Double(k) * noteLen
+        let env = min(1, into / 0.04) * (into > noteLen - 0.15 ? max(0, (noteLen - into) / 0.15) : 1)
+        let v = sin(2 * .pi * ph) + 0.5 * sin(4 * .pi * ph) + 0.25 * sin(6 * .pi * ph)
+        return g + Float(0.1 * env * v)
+    }
+    func spot(_ x: [Float]) -> [VoiceSpotter.Event] {
+        let an = SpectrumAnalyzer(sampleRate: sr), vs = VoiceSpotter()
+        var out: [VoiceSpotter.Event] = []
+        var pos = 0
+        while pos < x.count {
+            let end = min(pos + 512, x.count)
+            let t = Double(pos) / sr
+            x[pos..<end].withUnsafeBufferPointer { an.process($0) { bands in if let e = vs.process(bands, time: t) { out.append(e) } } }
+            pos = end
+        }
+        return out
+    }
+    let hits = spot(sung), noise = spot(groove)
+    var noteHit = Set<Int>()
+    var pairs: [(Double, Double)] = []
+    for e in hits {
+        let k = Int(e.time / noteLen)
+        if k > 0, e.time - Double(k) * noteLen < 0.5 { noteHit.insert(k); pairs.append((notes[k % notes.count], e.pitch)) }
+    }
+    let total = Int(secs / noteLen) - 1          // the first note falls in the spotter's 1 s warm-up
+    // Pitch order: share of note pairs whose spotted pitch orders the same way as the note.
+    var agree = 0, cmp = 0
+    for a in pairs.indices { for b in pairs.indices where b > a && pairs[a].0 != pairs[b].0 {
+        cmp += 1; if (pairs[a].0 < pairs[b].0) == (pairs[a].1 < pairs[b].1) { agree += 1 } } }
+    let order = cmp > 0 ? Double(agree) / Double(cmp) : 0
+    print(String(format: "sung line: %d of %d notes spawned a satellite (%d voices); pitch order %.0f %%", noteHit.count, total, hits.count, order * 100))
+    print("groove alone: \(noise.count) voices in \(Int(secs)) s")
+    let pass = Double(noteHit.count) >= 0.7 * Double(total) && noise.count <= 1 && order >= 0.75
+    print(pass ? "PASS" : "FAIL")
+    exit(pass ? 0 : 1)
+
 case "latency":
     print(AudioDevices.defaultOutputName(), String(format: "%.1f ms", AudioDevices.outputLatency() * 1000))
 
