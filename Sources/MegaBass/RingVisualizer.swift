@@ -57,6 +57,10 @@ final class RingSim {
         for g in grains where g.air && g.glow > 0.3 && g.r < base + 16 {
             out.append((g.th, g.glow * 0.35 * (1 - (g.r - base) / 16)))
         }
+        for p in prominences {
+            let age = clock - p.born
+            if age < 0.6 { out.append((p.th, p.power * 0.8 * (1 - age / 0.6))) }     // the blast lights the limb
+        }
         return Array(out.sorted { $0.1 > $1.1 }.prefix(24)).map { (th: $0.0, power: $0.1) }
     }
     private var prior: [Double] = []
@@ -105,6 +109,7 @@ final class RingSim {
             let target = 1 - exp(-speed * 0.22)
             heat[i] += (target - heat[i]) * (1 - exp(-dt / (target > heat[i] ? 0.025 : 0.28)))
         }
+        spawnProminences(dt)
         prior = levels
 
         advancePackets(dt)
@@ -139,6 +144,43 @@ final class RingSim {
         var a = (th + .pi / 2).truncatingRemainder(dividingBy: 2 * .pi)
         if a < 0 { a += 2 * .pi }
         return a / (2 * .pi)
+    }
+
+    // MARK: Prominences
+
+    /// A solar prominence: a loop (or an open plume) of plasma blasting off the planet's limb where
+    /// a band's level shoots up. White-hot at birth, it cools to orange and red and lingers ~2-4 s.
+    struct Prominence { var th: Double; var span: Double; var born: Double; var power: Double; var height: Double; var seed: Double; var loop: Bool }
+    var prominences: [Prominence] = []
+    private var promCool: [Double] = []
+    private var promGap = 0.0, promRef = 7.0
+
+    /// How long a prominence lingers, seconds.
+    static func linger(_ p: Prominence) -> Double { 1.6 + 2.2 * p.power }
+
+    private func spawnProminences(_ dt: Double) {
+        if promCool.count != levels.count { promCool = Array(repeating: 0, count: levels.count) }
+        promGap -= dt
+        // The fastest-rising loud band this frame, after a 1 s warm-up and at most one every 0.25 s.
+        var best: (i: Int, v: Double)?
+        for i in levels.indices {
+            promCool[i] -= dt
+            let v = (levels[i] - prior[i]) / dt                    // level per second, rising
+            guard v > 7, levels[i] > 0.35, promCool[i] <= 0 else { continue }
+            if best == nil || v > best!.v { best = (i, v) }
+        }
+        // Sudden means faster than this song's usual: the typical peak speed over ~8 s sets the bar.
+        let surprise = best.map { $0.v > 1.3 * promRef } ?? false
+        if let b = best { promRef += (b.v - promRef) * min(1, dt / 8) }
+        if let b = best, surprise, clock > 1, promGap <= 0, prominences.count < 8 {
+            let i = b.i
+            for j in max(0, i - 2)...min(levels.count - 1, i + 2) { promCool[j] = max(promCool[j], j == i ? 1.4 : 0.7) }
+            promGap = 0.25
+            let power = min(1, (b.v - 7) / 10 + 0.3 * levels[i])
+            prominences.append(Prominence(th: angle(ofBand: i), span: rand(0.22, 0.5), born: clock, power: power,
+                                          height: rand(0.55, 1), seed: rand(0, 100), loop: rand(0, 1) < 0.7))
+        }
+        prominences.removeAll { clock - $0.born > Self.linger($0) }
     }
 
     /// Interpolates a per-band array around the lap, wrapping highest into lowest at the seam.
@@ -507,6 +549,43 @@ struct RingVisualizer: View, Equatable {
         .accessibilityHidden(true)
     }
 
+    /// Prominences, additive: a wide soft glow, a mid band and a hot core that starts white (the
+    /// hotspot) and cools along the blackbody ramp while the loop rises, drifts and fades.
+    private func drawProminences(_ g: GraphicsContext, _ c: CGPoint) {
+        for p in sim.prominences {
+            let age = sim.clock - p.born, life = RingSim.linger(p)
+            let grow = 1 - exp(-age / 0.12)                                  // the blast
+            let fade = pow(max(0, 1 - age / life), 1.6)
+            let temp = 0.3 + 0.7 * exp(-age / 0.9)                           // white-hot, cooling
+            let h = sim.base * (0.3 + 0.6 * p.height * (0.4 + 0.6 * p.power)) * grow * (1 + 0.22 * age / life)
+            let foot = sim.base - 3
+            let wob = sin(sim.clock * 2.3 + p.seed) * 0.05
+            var path = Path()
+            if p.loop {
+                let a0 = p.th - p.span / 2, a1 = p.th + p.span / 2
+                path.move(to: pt(c, a0, foot))
+                path.addCurve(to: pt(c, a1, foot),
+                              control1: pt(c, p.th - p.span * 0.42 + wob, foot + h * 1.33),
+                              control2: pt(c, p.th + p.span * 0.42 + wob, foot + h * 1.33))
+            } else {
+                let bend = (p.seed.truncatingRemainder(dividingBy: 2) - 1) * p.span
+                path.move(to: pt(c, p.th, foot))
+                path.addCurve(to: pt(c, p.th + bend * 0.9 + wob, foot + h * 1.25),
+                              control1: pt(c, p.th + wob, foot + h * 0.5), control2: pt(c, p.th + bend * 0.4, foot + h))
+            }
+            let col = Self.blackbody(temp)
+            g.stroke(path, with: .color(col.opacity(0.16 * fade)), style: StrokeStyle(lineWidth: 9 + 9 * p.power, lineCap: .round))
+            g.stroke(path, with: .color(col.opacity(0.45 * fade)), style: StrokeStyle(lineWidth: 3 + 2.5 * p.power, lineCap: .round))
+            g.stroke(path, with: .color(Self.blackbody(min(1, temp + 0.25)).opacity(0.85 * fade)), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+            if age < 0.25 {                                                   // the blast flash at the limb
+                let f = 1 - age / 0.25, q = pt(c, p.th, sim.base), r = 6 + 14 * p.power
+                g.fill(Path(ellipseIn: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2)),
+                       with: .radialGradient(Gradient(colors: [Color.white.opacity(0.7 * f), col.opacity(0.3 * f), col.opacity(0)]),
+                                             center: q, startRadius: 0, endRadius: r))
+            }
+        }
+    }
+
     /// Metal glow by temperature: cherry, red, orange, yellow, white.
     static func blackbody(_ t: Double) -> Color {
         let stops: [(Double, Double, Double)] = [(0.35, 0.05, 0.04), (0.8, 0.12, 0.04), (1, 0.45, 0.08), (1, 0.85, 0.35), (1, 0.98, 0.92)]
@@ -584,6 +663,8 @@ struct RingVisualizer: View, Equatable {
             }
             hotStalks.stroke(p, with: heat, lineWidth: 1.2 + tmp * 2.2)
         }
+
+        drawProminences(hotStalks, c)
 
         // Pulses racing up the stalks: white-hot throbbing dots with a short tail.
         for p in sim.packets {
