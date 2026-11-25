@@ -22,6 +22,8 @@ final class RingSim {
     private var prior: [Double] = []
     var grains: [Grain] = []
     var clock: Double = 0
+    /// Recent ridge shapes (newest last) for the afterimage; vizamp fades its canvas instead of clearing.
+    var ghosts: [[CGPoint]] = []
     private var last: Double = 0
     private var lastKick: Double = 0
     private var rng = SystemRandomNumberGenerator()
@@ -254,6 +256,15 @@ struct RingVisualizer: View {
             ctx.stroke(p, with: .color(Theme.hot.opacity(floorFade(lv) * 0.45)), lineWidth: 1.5)
         }
 
+        // Motion blur on the ridge: the last frames' shapes, fainter with age.
+        for (k, ghost) in sim.ghosts.enumerated() where ghost.count == ridge.count {
+            let age = Double(sim.ghosts.count - k)                // 1 = previous frame
+            var p = Path(); p.addLines(ghost); p.closeSubpath()
+            ctx.stroke(p, with: .color(Heat.color(0.45).opacity(0.22 / age)), style: StrokeStyle(lineWidth: 2.2 + age * 0.6, lineCap: .round, lineJoin: .round))
+        }
+        sim.ghosts.append(ridge)
+        if sim.ghosts.count > 4 { sim.ghosts.removeFirst() }
+
         // The ridge line, each segment in its band's heat colour.
         for j in 1..<ridge.count {
             let th = (angles[j - 1] + angles[j]) / 2
@@ -272,9 +283,17 @@ struct RingVisualizer: View {
             let visibility = g.spark > 0 ? 0.9 * min(1, g.spark / 0.12) : floorFade(lv) * (g.air ? 0.85 : 0.4)
             let fade = min(1, g.age / 0.15) * max(0, min(1, (sim.escape - g.r) / (sim.escape - sim.fadeFrom)))
             let size = g.size + (g.spark > 0 ? 0.6 : 0)
-            if g.drawn, hypot(p.x - g.px, p.y - g.py) > 0.3, hypot(p.x - g.px, p.y - g.py) < 12 {
-                var s = Path(); s.move(to: CGPoint(x: g.px, y: g.py)); s.addLine(to: p)
-                ctx.stroke(s, with: .color(color.opacity(visibility * fade)), style: StrokeStyle(lineWidth: size, lineCap: .round))
+            // Motion blur: a streak back along the velocity (radial + tangential) over ~90 ms,
+            // transparent at the tail, full colour at the head.
+            let blur = 0.09
+            let tail = pt(c, g.th - g.vt * blur / max(20, g.r), g.r - g.vr * blur)
+            let length = hypot(p.x - tail.x, p.y - tail.y)
+            if g.air, length > 1.2 {
+                var s = Path(); s.move(to: tail); s.addLine(to: p)
+                let alpha = visibility * fade
+                ctx.stroke(s, with: .linearGradient(Gradient(colors: [color.opacity(0), color.opacity(alpha * 0.55), color.opacity(alpha)]),
+                                                     startPoint: tail, endPoint: p),
+                           style: StrokeStyle(lineWidth: size, lineCap: .round))
             } else {
                 ctx.fill(Path(ellipseIn: CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size)), with: .color(color.opacity(visibility * fade)))
             }
