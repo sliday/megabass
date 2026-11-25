@@ -1,3 +1,4 @@
+import AppKit
 import MegaBassCore
 import SwiftUI
 
@@ -194,6 +195,72 @@ final class RingSim {
 
     private func floorFade(_ v: Double) -> Double { let t = min(1, max(0, v / 0.09)); return t * t * (3 - 2 * t) }
 
+    // MARK: MilkDrop feedback
+
+    /// MilkDrop's core trick: each frame redraws the previous one slightly zoomed and rotated, faded,
+    /// then adds the new shapes, so everything leaves a swirling tunnel of echoes. Kept at 1x
+    /// (soft, like MilkDrop) in an offscreen bitmap the size of the visualizer.
+    private var feedback: CGContext?
+    private var feedbackSize = 0
+
+    func feedbackFrame(ridge: [CGPoint], size: CGSize, hot: Color, heat: Color) -> CGImage? {
+        let n = Int((size.width / 2).rounded())                 // half resolution: soft like MilkDrop, 4x cheaper
+        if feedback == nil || feedbackSize != n {
+            feedback = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            feedbackSize = n
+        }
+        guard let fb = feedback else { return nil }
+        let w = CGFloat(n), c = CGPoint(x: w / 2, y: w / 2)
+        let bass = levels.prefix(max(1, levels.count / 5)).reduce(0, +) / Double(max(1, levels.count / 5))
+
+        // 1. The previous frame, zoomed out from the centre and turned, faded.
+        let prev = fb.makeImage()
+        fb.clear(CGRect(x: 0, y: 0, width: w, height: w))
+        if let prev {
+            fb.saveGState()
+            fb.interpolationQuality = .low
+            fb.translateBy(x: c.x, y: c.y)
+            fb.rotate(by: CGFloat((0.004 + bass * 0.022) * (sin(clock * 0.17) >= 0 ? 1 : -1)))
+            let zoom = CGFloat(1.012 + bass * 0.03)
+            fb.scaleBy(x: zoom, y: zoom)
+            fb.translateBy(x: -c.x, y: -c.y)
+            fb.setAlpha(0.9)
+            fb.draw(prev, in: CGRect(x: 0, y: 0, width: w, height: w))
+            fb.restoreGState()
+        }
+
+        // 2. This frame's ridge and sparks, added as light, colours drifting between the palette pair.
+        fb.setBlendMode(.plusLighter)
+        let mix = 0.5 + 0.5 * sin(clock * 0.6)
+        let a = NSColor(hot).usingColorSpace(.sRGB) ?? .systemPink, b = NSColor(heat).usingColorSpace(.sRGB) ?? .orange
+        let ink = CGColor(srgbRed: a.redComponent * (1 - mix) + b.redComponent * mix,
+                          green: a.greenComponent * (1 - mix) + b.greenComponent * mix,
+                          blue: a.blueComponent * (1 - mix) + b.blueComponent * mix, alpha: 1)
+        let k = w / size.width                                   // view points -> buffer pixels
+        func flip(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * k, y: w - p.y * k) }   // CG's origin is bottom-left
+        if let first = ridge.first {
+            fb.beginPath(); fb.move(to: flip(first))
+            for p in ridge.dropFirst() { fb.addLine(to: flip(p)) }
+            fb.setStrokeColor(ink.copy(alpha: 0.18 + bass * 0.5)!)
+            fb.setLineWidth(1.4)
+            fb.strokePath()
+        }
+        for g in grains where g.air && g.glow > 0.05 {
+            let p = flip(CGPoint(x: size.width / 2 + cos(g.th) * g.r, y: size.height / 2 + sin(g.th) * g.r))
+            fb.setFillColor(ink.copy(alpha: g.glow * 0.55)!)
+            fb.fillEllipse(in: CGRect(x: p.x - 0.8, y: p.y - 0.8, width: 1.6, height: 1.6))
+        }
+        // 3. Round vignette inside the loop: echoes fade before the square edge, never a hard cut.
+        fb.setBlendMode(.destinationIn)
+        let vignette = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [
+            CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0),
+        ] as CFArray, locations: [0, 0.55, 1])!
+        fb.drawRadialGradient(vignette, startCenter: c, startRadius: 0, endCenter: c, endRadius: w / 2, options: [])
+        fb.setBlendMode(.normal)
+        return fb.makeImage()
+    }
+
     private func angularDistance(_ a: Double, _ b: Double) -> Double {
         let d = abs(a - b).truncatingRemainder(dividingBy: 2 * .pi)
         return min(d, 2 * .pi - d)
@@ -253,6 +320,11 @@ struct RingVisualizer: View {
         let steps = 120
         let angles = (0...steps).map { -Double.pi / 2 + Double($0) / Double(steps) * 2 * .pi }
         let ridge = angles.map { pt(c, $0, sim.surface($0)) }
+
+        // MilkDrop layer underneath: the swirling, zooming echoes of past frames.
+        if let echo = sim.feedbackFrame(ridge: ridge, size: CGSize(width: c.x * 2, height: c.y * 2), hot: Theme.hot, heat: Theme.heat) {
+            ctx.draw(Image(decorative: echo, scale: 1), in: CGRect(x: 0, y: 0, width: c.x * 2, height: c.y * 2))
+        }
 
         // Wash between the baseline and the ridge.
         var wash = Path()
