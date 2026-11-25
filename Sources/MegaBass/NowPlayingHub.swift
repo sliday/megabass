@@ -188,3 +188,52 @@ enum Palettes {
         }
     }
 }
+
+/// Blends the accent pair from the old palette to the new one (0.9 s, ease in-out) instead of
+/// snapping. Views that use the accent read `\.themeTick`, so they repaint on every step.
+@MainActor
+final class ThemeAnimator: ObservableObject {
+    static let shared = ThemeAnimator()
+    @Published private(set) var tick = 0
+    private var timer: Timer?
+    private var key = ""
+
+    private static func rgb(_ c: Color) -> (Double, Double, Double) {
+        let n = NSColor(c).usingColorSpace(.sRGB) ?? .black
+        return (n.redComponent, n.greenComponent, n.blueComponent)
+    }
+
+    /// Moves to `target`. The first call (no previous palette) applies it at once.
+    func go(to target: (hot: Color, heat: Color), key newKey: String) {
+        guard newKey != key else { return }
+        let first = key.isEmpty
+        key = newKey
+        timer?.invalidate()
+        if first { Theme.hot = target.hot; Theme.heat = target.heat; tick += 1; return }
+        let from = (Self.rgb(Theme.hot), Self.rgb(Theme.heat)), to = (Self.rgb(target.hot), Self.rgb(target.heat))
+        let start = Date()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] t in
+            Task { @MainActor in
+                guard let self else { return }
+                let x = min(1, Date().timeIntervalSince(start) / 0.9)
+                let e = x < 0.5 ? 4 * x * x * x : 1 - pow(-2 * x + 2, 3) / 2          // ease in-out
+                func lerp(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Color {
+                    Color(red: a.0 + (b.0 - a.0) * e, green: a.1 + (b.1 - a.1) * e, blue: a.2 + (b.2 - a.2) * e)
+                }
+                Theme.hot = lerp(from.0, to.0)
+                Theme.heat = lerp(from.1, to.1)
+                self.tick += 1
+                if x >= 1 { t.invalidate() }
+            }
+        }
+    }
+}
+
+private struct ThemeTickKey: EnvironmentKey { static let defaultValue = 0 }
+extension EnvironmentValues {
+    /// Changes on every palette step; views using `Theme` accents read it so they repaint.
+    var themeTick: Int {
+        get { self[ThemeTickKey.self] }
+        set { self[ThemeTickKey.self] = newValue }
+    }
+}

@@ -16,10 +16,11 @@ enum Theme {
 struct PopoverView: View {
     @ObservedObject var engine: Engine
     @ObservedObject var hub: NowPlayingHub
+    @ObservedObject private var theme = ThemeAnimator.shared
+
+    private var paletteKey: String { hub.active.rawValue + ":" + hub.cliamp.station }
 
     var body: some View {
-        let palette = Palettes.current(source: hub.active, station: hub.cliamp.station)
-        let _ = { Theme.hot = palette.hot; Theme.heat = palette.heat }()
         VStack(spacing: 14) {
             header
             PowerRing(engine: engine)
@@ -43,11 +44,16 @@ struct PopoverView: View {
         .frame(width: 300)
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
-        .id(hub.active.rawValue + hub.cliamp.station)      // repaint every control in the new palette
-        .animation(.easeOut(duration: 0.3), value: hub.active)
+        .environment(\.themeTick, theme.tick)              // every accent view repaints as the palette blends
+        .onAppear { applyPalette() }
+        .onChange(of: paletteKey) { _ in applyPalette() }
         .environment(\.colorScheme, .dark)
         .onAppear { hub.startPolling() }
         .onDisappear { hub.stopPolling() }
+    }
+
+    private func applyPalette() {
+        theme.go(to: Palettes.current(source: hub.active, station: hub.cliamp.station), key: paletteKey)
     }
 
     private var header: some View {
@@ -119,6 +125,7 @@ struct PopoverView: View {
 /// The hero: a power button wrapped in a ring of ticks that pulse with the bass.
 struct PowerRing: View {
     @ObservedObject var engine: Engine
+    @Environment(\.themeTick) private var themeTick
     private let ticks = 48
 
     var body: some View {
@@ -128,17 +135,17 @@ struct PowerRing: View {
                 .frame(width: 280, height: 280)          // sparks fly past the hero's box; layout stays 168
             Button(action: { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } }) {
                 ZStack {
-                    Circle()
-                        .fill(engine.enabled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.panel))
-                    Circle()
-                        .strokeBorder(Color.white.opacity(engine.enabled ? 0.18 : 0.08), lineWidth: 0.5)
+                    // A small gas giant with an atmosphere; the halo spills past the 96 pt hit area.
+                    PlanetView(engine: engine, radius: 48)
+                        .frame(width: 124, height: 124)
                     Image(systemName: "power")
-                        .font(.system(size: 32, weight: .bold))
-                        .foregroundStyle(engine.enabled ? .white : Theme.secondary)
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(engine.enabled ? .white.opacity(0.92) : Theme.secondary)
+                        .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
                 }
                 .frame(width: 96, height: 96)
+                .contentShape(Circle())
                 .scaleEffect(1 + 0.04 * engine.kickPulse)
-                .shadow(color: engine.enabled ? Theme.hot.opacity(0.3 + 0.35 * engine.kickPulse) : .clear, radius: 10)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")
@@ -159,6 +166,7 @@ struct PowerRing: View {
 
 struct ModePicker: View {
     @Binding var mode: BassMode
+    @Environment(\.themeTick) private var themeTick
     var enabled = true
     @Namespace private var thumb
 
@@ -242,6 +250,7 @@ struct LowBandControl: View {
 /// Two-handle band selector over three faint zones. Drag anywhere: the nearer handle follows.
 struct BandStrip: View {
     @Binding var low: Double
+    @Environment(\.themeTick) private var themeTick
     @Binding var high: Double
     var spectrum: [Double] = []
     var live = false
@@ -385,6 +394,7 @@ struct ValueSlider: View {
 /// Now playing from cliamp, Spotify or Music: source/station pill, title, artist, progress, transport.
 struct NowPlaying: View {
     @ObservedObject var hub: NowPlayingHub
+    @Environment(\.themeTick) private var themeTick
     @ObservedObject var player: CliampBridge
 
     var body: some View {
