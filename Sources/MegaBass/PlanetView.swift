@@ -322,6 +322,7 @@ struct PlanetView: View, Equatable {
 
         // Fire eye: a crown of flame tongues licking off the limb, leaping higher with the bass.
         if st.kind == .fireEye {
+            FireFocus.shared.step(t: t, energy: on ? OrbitSim.shared.energy : 0, kick: kick)
             let fire = fadedGlow(ctx, size: size)
             let e = on ? min(1, OrbitSim.shared.energy * 2.2) : 0.1
             let warmth = Gradient(stops: [.init(color: Color(red: 1, green: 0.85, blue: 0.5).opacity(on ? 0.7 : 0.25), location: 0),
@@ -334,7 +335,7 @@ struct PlanetView: View, Equatable {
             for k in 0..<n {
                 let a = Double(k) / Double(n) * 2 * .pi + 0.04 * sin(t * 3 + Double(k))
                 let flick = 0.5 + 0.5 * sin(t * (4 + Double(k % 5)) + Double(k) * 1.7)
-                let len = R * (0.18 + 0.3 * flick) * (0.6 + 0.8 * e + 0.4 * kick)
+                let len = R * (0.18 + 0.3 * flick) * (0.6 + 0.8 * e + 0.4 * kick) * (0.75 + 0.6 * FireFocus.shared.dilation)   // tight when focused
                 let w = 0.11 + 0.03 * sin(Double(k) * 2.3)
                 let sway = 0.12 * sin(t * 5 + Double(k) * 0.9)
                 var tongue = Path()
@@ -393,7 +394,8 @@ struct PlanetView: View, Equatable {
                                                   blur: eye ? 0 : Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch + (eye ? EyeLook.shared.pitch : 0),
                                                   liquid: Float(0.45 - 1.2 * min(1, OrbitSim.shared.energy * 2.2) * (on ? 1 : 0.3)),   // quiet: a quarter full; loud: ~90 %
                                                   time: OrbitSim.shared.time,
-                                                  wobble: Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick),
+                                                  wobble: st.kind == .fireEye ? Float(FireFocus.shared.dilation)
+                                                      : Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick),
                                                   pixelScale: pixelScale,
                                                   liquidSlope: Float(ManaSlosh.shared.tilt - PlanetSpin.shared.wobble)) {
             var disc2 = ctx
@@ -915,6 +917,31 @@ extension EnvironmentValues {
     var planetEdge: PlanetEdge {
         get { self[PlanetEdgeKey.self] }
         set { self[PlanetEdgeKey.self] = newValue }
+    }
+}
+
+/// The fire eye's pupil: 0 a thin focused slit, 1 wide. With the pointer over the panel it fixes on
+/// you (narrow); otherwise it searches, drifting between narrow and wide every few seconds. It narrows
+/// fast and widens slowly, snaps narrow on a kick (startled), and loud music opens it a little.
+@MainActor
+final class FireFocus {
+    static let shared = FireFocus()
+    private(set) var dilation = 0.3
+    private var target = 0.3, nextShift = 0.0, last = 0.0, lastKick = 0.0
+
+    func step(t: Double, energy: Double, kick: Double) {
+        let dt = last == 0 ? 0 : min(0.1, t - last)
+        last = t
+        if RingSim.shared.cursor != nil {
+            target = 0.04
+        } else if t > nextShift {
+            target = Double.random(in: 0...1) < 0.5 ? Double.random(in: 0.6...1) : Double.random(in: 0.04...0.25)
+            nextShift = t + Double.random(in: 2...5)
+        }
+        if kick > lastKick + 0.4 { dilation = max(0, dilation - 0.35 * kick) }
+        lastKick = kick
+        let goal = min(1, target + 0.25 * min(1, energy * 2.2))
+        dilation += (goal - dilation) * min(1, dt * (goal < dilation ? 7 : 1.6))
     }
 }
 

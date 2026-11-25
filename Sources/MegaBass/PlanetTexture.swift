@@ -528,7 +528,8 @@ final class PlanetTextures {
                 let glum = simd_dot(emitted, SIMD3<Float>(0.299, 0.587, 0.114))
                 emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
             }
-            if fire { emitted *= 0.8 + 0.3 * sin(tt * 7 + tex.height[row + u] * 40) }   // the fire flickers in patches
+            // The fire flickers in patches, and burns hotter while the eye is focused (wobble = dilation).
+            if fire { emitted *= (0.8 + 0.3 * sin(tt * 7 + tex.height[row + u] * 40)) * (0.85 + 0.4 * (1 - wobble)) }
             out += emitted
             if mercury {
                 // Liquid metal: the view reflected off a rippling surface (ripples swell with the bass).
@@ -582,10 +583,13 @@ final class PlanetTextures {
                     let gx = ex * tiltC + ny2 * tiltS, gy = -ex * tiltS + ny2 * tiltC     // upright on screen
                     let gu = gx / (2 * iconHalf) + 0.5, gv = 0.5 - gy / (2 * iconHalf)
                     if fire {
-                        // The slit pupil, widening with the music, with a white-hot rim.
-                        let sw = (0.035 + 0.05 * wobble) * sqrt(max(0, 1 - (gy / 0.42) * (gy / 0.42)))
-                        let slit = smooth(sw + 0.015, sw, abs(gx))
-                        let rimGlow = smooth(sw + 0.07, sw + 0.015, abs(gx)) * (1 - slit) * smooth(0.45, 0.3, abs(gy))
+                        // The slit pupil: a thin sliver when focused, a wide rounder pupil when it dilates
+                        // (wobble carries the dilation), with a white-hot rim, brightest when focused.
+                        let hh = 0.4 + 0.08 * wobble
+                        let sw = (0.025 + 0.2 * wobble) * sqrt(max(0, 1 - (gy / hh) * (gy / hh)))
+                        let ends = smooth(hh, hh - 0.04, abs(gy))                         // the slit stops at its tips
+                        let slit = smooth(sw + 0.015, sw, abs(gx)) * ends
+                        let rimGlow = smooth(sw + 0.07, sw + 0.015, abs(gx)) * (1 - slit) * smooth(hh + 0.03, hh - 0.12, abs(gy)) * (1.3 - 0.6 * wobble)
                         out = out * (1 - slit * 0.95) + SIMD3<Float>(1, 0.78, 0.4) * rimGlow * 0.9
                     }
                     if eye {
