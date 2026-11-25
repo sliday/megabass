@@ -389,43 +389,50 @@ struct NowPlaying: View {
 
     var body: some View {
         let now = hub.now
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                sourceMenu
-                if now.running && !now.title.isEmpty {
-                    Text(now.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                    Text(now.artist.isEmpty ? hub.active.name : now.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
-                    if now.duration > 0 {
-                        HStack(spacing: 6) {
-                            GeometryReader { g in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(Color.white.opacity(0.1))
-                                    Capsule().fill(Theme.accent).frame(width: g.size.width * min(1, now.position / now.duration))
-                                }
-                            }
-                            .frame(height: 3)
-                            Text(Self.time(now.position) + " / " + Self.time(now.duration))
-                                .font(.system(size: 9, weight: .medium).monospacedDigit())
-                                .foregroundStyle(Theme.secondary)
-                                .fixedSize()
-                        }
-                        .padding(.top, 2)
+        VStack(alignment: .leading, spacing: 8) {
+            sourceMenu
+            // Title and artist share one centre line with the transport.
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if now.running && !now.title.isEmpty {
+                        Text(now.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                        Text(now.artist.isEmpty ? hub.active.name : now.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    } else {
+                        Text("Nothing playing").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        Text("Pick a station or a player above").font(.system(size: 11)).foregroundStyle(Theme.secondary)
                     }
-                } else {
-                    Text("Nothing playing").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-                    Text("Pick a station or a player above").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                }
+                Spacer(minLength: 4)
+                HStack(spacing: 2) {
+                    transport("backward.fill", "Previous track") { hub.prev() }
+                    transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
+                        if now.running { hub.toggle() } else { hub.select(hub.active) }
+                    }
+                    transport("forward.fill", "Next track") { hub.next() }
                 }
             }
-            Spacer(minLength: 4)
-            HStack(spacing: 2) {
-                transport("backward.fill", "Previous track") { hub.prev() }
-                transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
-                    if now.running { hub.toggle() } else { hub.select(hub.active) }
+            // Full-width progress, times at both ends (Control Center style).
+            if now.running && now.duration > 0 {
+                VStack(spacing: 3) {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.1))
+                            Capsule().fill(Theme.accent).frame(width: g.size.width * min(1, now.position / now.duration))
+                        }
+                    }
+                    .frame(height: 3)
+                    HStack {
+                        Text(Self.time(now.position))
+                        Spacer()
+                        Text("-" + Self.time(max(0, now.duration - now.position)))
+                    }
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.secondary)
                 }
-                transport("forward.fill", "Next track") { hub.next() }
             }
         }
-        .padding(10)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
     }
 
