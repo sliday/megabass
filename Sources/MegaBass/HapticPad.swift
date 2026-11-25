@@ -75,12 +75,40 @@ struct HapticPad: View {
     }
 }
 
+/// A soft radial glow behind the panel, centred on the planet, ~200 pt across: 5 % at rest,
+/// up to 10 %, breathing with the trackpad's soundwave.
+struct BackgroundGlow: View {
+    @ObservedObject var engine: Engine
+    @Environment(\.themeTick) private var themeTick
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !engine.enabled)) { _ in
+            Canvas { ctx, size in
+                let c = RingSim.shared.ringCenter == .zero ? CGPoint(x: size.width / 2, y: 150) : RingSim.shared.ringCenter
+                let beat = engine.enabled ? WavePhase.shared.pulse * min(1, engine.level * 1.4) : 0
+                let a = 0.05 + 0.05 * beat
+                let r: CGFloat = 200
+                ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                         with: .radialGradient(Gradient(stops: [
+                            .init(color: Theme.hot.opacity(a), location: 0),
+                            .init(color: Theme.hot.opacity(a * 0.6), location: 0.35),
+                            .init(color: Theme.hot.opacity(a * 0.18), location: 0.7),
+                            .init(color: Theme.hot.opacity(0), location: 1),
+                         ]), center: c, startRadius: 0, endRadius: r))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// Soundwave phase for the trackpad visual: accumulated per frame, wavelength eased.
 @MainActor
 final class WavePhase {
     static let shared = WavePhase()
     private(set) var phase = 0.0
     private(set) var lambda = 20.0
+    /// 0...1, the same pulse the trackpad wave shows at its centre (for the window glow).
+    var pulse: Double { 0.5 + 0.5 * sin(2 * .pi * phase) }
     private var last = 0.0
 
     func advance(t: Double, hz: Double) -> (phase: Double, lambda: Double) {

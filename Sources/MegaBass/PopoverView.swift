@@ -24,6 +24,7 @@ struct PopoverView: View {
 
     var body: some View {
         full.padding(16)
+            .background(BackgroundGlow(engine: engine))
         .frame(width: 300)
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
