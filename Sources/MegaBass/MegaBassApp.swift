@@ -8,7 +8,7 @@ struct MegaBassApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverView(engine: delegate.engine, player: delegate.player)
+            PopoverView(engine: delegate.engine, hub: delegate.hub)
         } label: {
             MenuBarIcon(engine: delegate.engine)
         }
@@ -28,6 +28,7 @@ struct MenuBarIcon: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let engine = Engine(restore: !CommandLine.arguments.contains("--preview"))
     let player = CliampBridge()
+    lazy var hub = NowPlayingHub(cliamp: player)
     private var preview: NSWindow?
     private var diagTimer: Timer?
 
@@ -55,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--preview") {
             let w = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "megabass"
-            w.contentView = NSHostingView(rootView: PopoverView(engine: engine, player: player))
+            w.contentView = NSHostingView(rootView: PopoverView(engine: engine, hub: hub))
             w.setContentSize(w.contentView!.fittingSize)
             w.center()
             w.makeKeyAndOrderFront(nil)
@@ -86,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             p.level = .floating
             p.hidesOnDeactivate = false
             p.isReleasedWhenClosed = false
-            p.contentView = NSHostingView(rootView: PopoverView(engine: engine, player: player))
+            p.contentView = NSHostingView(rootView: PopoverView(engine: engine, hub: hub))
             p.setContentSize(p.contentView!.fittingSize)
             if let screen = NSScreen.main {
                 let v = screen.visibleFrame

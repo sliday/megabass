@@ -7,21 +7,24 @@ enum Theme {
     static let panel = Color(red: 0.086, green: 0.086, blue: 0.11)
     static let hairline = Color.white.opacity(0.07)
     static let secondary = Color(red: 0.54, green: 0.54, blue: 0.59)
-    static let hot = Color(red: 1.0, green: 0.18, blue: 0.47)       // magenta
-    static let heat = Color(red: 1.0, green: 0.48, blue: 0.16)      // orange
-    static let accent = LinearGradient(colors: [hot, heat], startPoint: .topLeading, endPoint: .bottomTrailing)
+    // Accent pair: megabass magenta/orange by default; follows the playing source and station.
+    nonisolated(unsafe) static var hot = Palettes.megabass.hot
+    nonisolated(unsafe) static var heat = Palettes.megabass.heat
+    static var accent: LinearGradient { LinearGradient(colors: [hot, heat], startPoint: .topLeading, endPoint: .bottomTrailing) }
 }
 
 struct PopoverView: View {
     @ObservedObject var engine: Engine
-    @ObservedObject var player: CliampBridge
+    @ObservedObject var hub: NowPlayingHub
 
     var body: some View {
+        let palette = Palettes.current(source: hub.active, station: hub.cliamp.station)
+        let _ = { Theme.hot = palette.hot; Theme.heat = palette.heat }()
         VStack(spacing: 14) {
             header
             PowerRing(engine: engine)
                 .padding(.top, 4)
-            if player.installed { NowPlaying(player: player) }
+            if !hub.installedSources.isEmpty { NowPlaying(hub: hub, player: hub.cliamp) }
             if engine.needsPermission { permissionRow }
             Group {
                 ModePicker(mode: $engine.mode, enabled: engine.enabled)
@@ -40,9 +43,11 @@ struct PopoverView: View {
         .frame(width: 300)
         .background(Theme.ground.opacity(0.88))
         .background(.ultraThinMaterial)
+        .id(hub.active.rawValue + hub.cliamp.station)      // repaint every control in the new palette
+        .animation(.easeOut(duration: 0.3), value: hub.active)
         .environment(\.colorScheme, .dark)
-        .onAppear { player.startPolling() }
-        .onDisappear { player.stopPolling() }
+        .onAppear { hub.startPolling() }
+        .onDisappear { hub.stopPolling() }
     }
 
     private var header: some View {
@@ -376,93 +381,101 @@ struct ValueSlider: View {
 /// Last quarter each slider sat in (no @State: the Command Line Tools ship without SwiftUI's macro plugin).
 @MainActor enum Detents { static var last: [String: Int] = [:] }
 
-/// cliamp now playing: title, artist, progress and transport. Start a playlist if cliamp is idle.
+/// Now playing from cliamp, Spotify or Music: source/station pill, title, artist, progress, transport.
 struct NowPlaying: View {
+    @ObservedObject var hub: NowPlayingHub
     @ObservedObject var player: CliampBridge
 
     var body: some View {
+        let now = hub.now
         HStack(spacing: 10) {
-            if player.running && !player.title.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    if !player.stations.isEmpty { stationMenu }
-                    Text(player.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                    Text(player.artist.isEmpty ? "cliamp" : player.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
-                    if player.duration > 0 {
+            VStack(alignment: .leading, spacing: 2) {
+                sourceMenu
+                if now.running && !now.title.isEmpty {
+                    Text(now.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                    Text(now.artist.isEmpty ? hub.active.name : now.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    if now.duration > 0 {
                         HStack(spacing: 6) {
                             GeometryReader { g in
                                 ZStack(alignment: .leading) {
                                     Capsule().fill(Color.white.opacity(0.1))
-                                    Capsule().fill(Color.white.opacity(0.7)).frame(width: g.size.width * min(1, player.position / player.duration))
+                                    Capsule().fill(Theme.accent).frame(width: g.size.width * min(1, now.position / now.duration))
                                 }
                             }
                             .frame(height: 3)
-                            Text(Self.time(player.position) + " / " + Self.time(player.duration))
+                            Text(Self.time(now.position) + " / " + Self.time(now.duration))
                                 .font(.system(size: 9, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Theme.secondary)
                                 .fixedSize()
                         }
                         .padding(.top, 2)
                     }
+                } else {
+                    Text("Nothing playing").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    Text("Pick a station or a player above").font(.system(size: 11)).foregroundStyle(Theme.secondary)
                 }
-                Spacer(minLength: 4)
-                HStack(spacing: 2) {
-                    transport("backward.fill", "Previous track") { player.prev() }
-                    transport(player.playing ? "pause.fill" : "play.fill", player.playing ? "Pause" : "Play") { player.toggle() }
-                    transport("forward.fill", "Next track") { player.next() }
+            }
+            Spacer(minLength: 4)
+            HStack(spacing: 2) {
+                transport("backward.fill", "Previous track") { hub.prev() }
+                transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
+                    if now.running { hub.toggle() } else { hub.select(hub.active) }
                 }
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("cliamp").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-                    Text(player.running ? "Nothing playing" : "Player not running").font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                Menu("Play") {
-                    if !player.stations.isEmpty {
-                        Section("cliamp radio") {
-                            ForEach(player.stations, id: \.id) { s in Button(s.name) { player.play(station: s.id) } }
-                        }
-                    }
-                    if !player.playlists.isEmpty {
-                        Section("Playlists") {
-                            ForEach(player.playlists, id: \.self) { name in Button(name) { player.play(playlist: name) } }
-                        }
-                    }
-                    if player.playlists.isEmpty && player.stations.isEmpty { Text("Nothing to play yet: run cliamp in Terminal") }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .font(.system(size: 12, weight: .medium))
+                transport("forward.fill", "Next track") { hub.next() }
             }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
     }
 
-    /// "📻 Lofi ▾": switch cliamp radio channels; the current one is checked.
-    private var stationMenu: some View {
+    /// The pill: what's playing (a cliamp station, Spotify, Music). Its menu switches players and stations.
+    private var sourceMenu: some View {
         Menu {
-            ForEach(player.stations, id: \.id) { s in
-                Button { player.play(station: s.id) } label: {
-                    if s.id == player.station { Label(s.name, systemImage: "checkmark") } else { Text(s.name) }
+            Section("Play on") {
+                ForEach(hub.installedSources) { s in
+                    Button { hub.select(s) } label: {
+                        let mark = hub.snapshot(s).playing ? "  ▸ playing" : ""
+                        if s == hub.active { Label(s.name + mark, systemImage: "checkmark") } else { Text(s.name + mark) }
+                    }
+                }
+            }
+            if !player.stations.isEmpty {
+                Section("cliamp radio") {
+                    ForEach(player.stations, id: \.id) { st in
+                        Button { player.play(station: st.id); hub.select(.cliamp) } label: {
+                            if hub.active == .cliamp && st.id == player.station { Label(st.name, systemImage: "checkmark") } else { Text(st.name) }
+                        }
+                    }
+                }
+            }
+            if !player.playlists.isEmpty {
+                Section("cliamp playlists") {
+                    ForEach(player.playlists, id: \.self) { name in Button(name) { player.play(playlist: name); hub.select(.cliamp) } }
                 }
             }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 9, weight: .semibold))
-                Text(player.stations.first { $0.id == player.station }?.name ?? "Stations")
+                Image(systemName: hub.active == .cliamp ? "dot.radiowaves.left.and.right" : "music.note")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(pillTitle)
                 Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
             }
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Theme.hot)
             .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(Color.white.opacity(0.07)))
+            .background(Capsule().fill(Theme.hot.opacity(0.14)))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Switch cliamp radio station")
-        .accessibilityLabel("Station")
+        .help("Switch player or cliamp station")
+        .accessibilityLabel("Source")
+    }
+
+    private var pillTitle: String {
+        if hub.active == .cliamp { return player.stations.first { $0.id == player.station }?.name ?? "cliamp" }
+        return hub.active.name
     }
 
     static func time(_ s: Double) -> String { String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) }

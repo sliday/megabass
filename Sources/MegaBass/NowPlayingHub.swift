@@ -1,0 +1,190 @@
+import AppKit
+import Combine
+import SwiftUI
+
+/// Who's playing: cliamp, Spotify or Apple Music. Shows the active one, routes the transport to it,
+/// and switches between them. Spotify and Music go through AppleScript (asks for Automation once);
+/// apps that aren't running are never launched by polling.
+@MainActor
+final class NowPlayingHub: ObservableObject {
+    enum Source: String, CaseIterable, Identifiable {
+        case cliamp, spotify, music
+        var id: String { rawValue }
+        var name: String { switch self { case .cliamp: "cliamp"; case .spotify: "Spotify"; case .music: "Music" } }
+        var bundleID: String? { switch self { case .cliamp: nil; case .spotify: "com.spotify.client"; case .music: "com.apple.Music" } }
+    }
+
+    struct Snapshot: Equatable {
+        var running = false, playing = false
+        var title = "", artist = "", position = 0.0, duration = 0.0
+    }
+
+    let cliamp: CliampBridge
+    @Published private(set) var active: Source = .cliamp
+    @Published private(set) var others: [Source: Snapshot] = [:]
+    private var timer: Timer?
+    private var pinnedUntil = Date.distantPast
+    private var cliampSub: Any?
+
+    init(cliamp: CliampBridge) {
+        self.cliamp = cliamp
+        // Re-publish cliamp changes so one object drives the view.
+        cliampSub = cliamp.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.decide(); self?.objectWillChange.send() }
+        }
+    }
+
+    // MARK: State for the view
+
+    var installedSources: [Source] {
+        Source.allCases.filter { s in
+            s == .cliamp ? cliamp.installed : NSWorkspace.shared.urlForApplication(withBundleIdentifier: s.bundleID!) != nil
+        }
+    }
+
+    func snapshot(_ s: Source) -> Snapshot {
+        if s == .cliamp {
+            return Snapshot(running: cliamp.running, playing: cliamp.playing, title: cliamp.title, artist: cliamp.artist,
+                            position: cliamp.position, duration: cliamp.duration)
+        }
+        return others[s] ?? Snapshot()
+    }
+
+    var now: Snapshot { snapshot(active) }
+
+    // MARK: Polling
+
+    func startPolling() {
+        cliamp.startPolling()
+        guard timer == nil else { return }
+        poll()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.poll() }
+        }
+    }
+
+    func stopPolling() {
+        cliamp.stopPolling()
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// AppleScript runs on its own queue: a pending Automation prompt or a slow app must not freeze the UI.
+    nonisolated private static let scriptQueue = DispatchQueue(label: "megabass.applescript")
+    private var querying = false
+
+    private func poll() {
+        decide()
+        guard !querying else { return }
+        let targets = [Source.spotify, .music].map { ($0, isRunning($0)) }
+        querying = true
+        Self.scriptQueue.async { [weak self] in
+            var result: [Source: Snapshot] = [:]
+            for (s, running) in targets { result[s] = running ? (Self.query(s) ?? Snapshot(running: true)) : Snapshot() }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.querying = false
+                if self.others != result { self.others = result }
+                self.decide()
+            }
+        }
+    }
+
+    /// The active source follows whoever is playing, unless you picked one in the last 20 s.
+    private func decide() {
+        guard Date() > pinnedUntil else { return }
+        let playing = Source.allCases.filter { snapshot($0).playing }
+        if !playing.contains(active), let first = playing.first(where: { $0 != .cliamp }) ?? playing.first {
+            active = first
+        }
+    }
+
+    private func isRunning(_ s: Source) -> Bool {
+        guard let id = s.bundleID else { return cliamp.running }
+        return !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+    }
+
+    // MARK: Control
+
+    func toggle() { control(active, cliampCmd: { $0.toggle() }, script: "playpause") }
+    func next() { control(active, cliampCmd: { $0.next() }, script: "next track") }
+    func prev() { control(active, cliampCmd: { $0.prev() }, script: "previous track") }
+
+    /// Makes `s` the player: pauses the others and starts or resumes it.
+    func select(_ s: Source) {
+        pinnedUntil = Date().addingTimeInterval(20)
+        active = s
+        for other in Source.allCases where other != s && snapshot(other).playing {
+            if other == .cliamp { cliamp.toggle() } else { Self.run(other, "pause") }
+        }
+        switch s {
+        case .cliamp:
+            if !cliamp.running { cliamp.play(station: cliamp.station.isEmpty ? "lofi" : cliamp.station) }
+            else if !cliamp.playing { cliamp.toggle() }
+        default:
+            Self.run(s, "play")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.poll() }
+    }
+
+    private func control(_ s: Source, cliampCmd: (CliampBridge) -> Void, script: String) {
+        if s == .cliamp { cliampCmd(cliamp) } else { Self.run(s, script) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.poll() }
+    }
+
+    // MARK: AppleScript
+
+    private static func run(_ s: Source, _ command: String) {
+        guard s != .cliamp, !NSRunningApplication.runningApplications(withBundleIdentifier: s.bundleID!).isEmpty || command == "play" else { return }
+        scriptQueue.async {
+            var err: NSDictionary?
+            NSAppleScript(source: "tell application \"\(s.name)\" to \(command)")?.executeAndReturnError(&err)
+        }
+    }
+
+    /// State, title, artist, position and duration (s) in one round trip.
+    nonisolated private static func query(_ s: Source) -> Snapshot? {
+        let durationExpr = s == .spotify ? "(duration of current track) / 1000" : "duration of current track"
+        let src = """
+        tell application "\(s.name)"
+            set pState to player state as string
+            if pState is "stopped" then return pState
+            return pState & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position as string) & linefeed & ((\(durationExpr)) as string)
+        end tell
+        """
+        var err: NSDictionary?
+        guard let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue else { return nil }
+        let f = out.components(separatedBy: "\n")
+        func num(_ i: Int) -> Double { i < f.count ? Double(f[i].replacingOccurrences(of: ",", with: ".")) ?? 0 : 0 }
+        return Snapshot(running: true, playing: f.first == "playing",
+                        title: f.count > 1 ? f[1] : "", artist: f.count > 2 ? f[2] : "",
+                        position: num(3), duration: num(4))
+    }
+}
+
+/// Colours per source and cliamp station; the popover's accent follows what's playing.
+enum Palettes {
+    static let megabass = (hot: Color(red: 1.0, green: 0.18, blue: 0.47), heat: Color(red: 1.0, green: 0.48, blue: 0.16))
+
+    static func hex(_ v: UInt32) -> Color {
+        Color(red: Double(v >> 16 & 0xFF) / 255, green: Double(v >> 8 & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+
+    static let stations: [String: (UInt32, UInt32)] = [
+        "lofi": (0xFF8FAB, 0xB388FF), "meditative": (0x2EC4B6, 0x7DD3FC), "synthwave": (0xFF2E97, 0x00E5FF),
+        "edm": (0x3D5AFE, 0xE040FB), "omarchy": (0xF59E0B, 0x84CC16), "chiptune": (0x22C55E, 0xFACC15),
+        "amiga": (0x3B82F6, 0xF97316), "ncs": (0x00E5FF, 0x2979FF), "ncs-house": (0xFFB300, 0xFF3D00),
+        "ncs-dubstep": (0x76FF03, 0x00C853), "ncs-dnb": (0xFF1744, 0xFF9100), "ncs-trap": (0xD500F9, 0x651FFF),
+        "ncs-phonk": (0xC2185B, 0xFF4D6D), "ncs-pop": (0xFF4081, 0xFFD740), "ncs-chill": (0x80DEEA, 0xB39DDB),
+    ]
+
+    static func current(source: NowPlayingHub.Source, station: String) -> (hot: Color, heat: Color) {
+        switch source {
+        case .spotify: return (hex(0x1DB954), hex(0x1ED7A0))
+        case .music: return (hex(0xFA2D48), hex(0xFF6B81))
+        case .cliamp:
+            guard let p = stations[station] else { return megabass }
+            return (hex(p.0), hex(p.1))
+        }
+    }
+}

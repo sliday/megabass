@@ -12,6 +12,7 @@
     <key>LSMinimumSystemVersion</key><string>14.4</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>megabass shows what Spotify or Music is playing and controls play, pause and skip from its panel.</string>
     <key>NSAudioCaptureUsageDescription</key><string>megabass listens to what your Mac plays to turn the bass into trackpad vibration. Audio never leaves your Mac.</string>
 </dict>
 </plist>
