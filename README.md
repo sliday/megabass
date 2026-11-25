@@ -7,30 +7,33 @@ A macOS menu-bar app that plays your music on the trackpad. Spotify, Music, YouT
 the same audio and replays its low end on the Force Touch haptic motor, cycle by cycle and in time
 with the speakers. Notes that stand out above the bass (a sung line, a lead) can ride along.
 
-<p align="center"><img src="docs/demo.gif" width="320" alt="megabass panel: power ring pulsing with the bass, cliamp now playing, live spectrum with the frequency handles, modes"></p>
+<p align="center"><img src="docs/demo.gif" width="280" alt="megabass: the planet panel with Spotify playing, switching to the floating planet widget and back"></p>
 <p align="center"><a href="docs/demo.mp4">Watch with sound (MP4)</a></p>
 
 ## Use it
 
-Click the power button. The ring pulses with the bass and the trackpad starts to play.
+Click the planet to switch the trackpad on. It pulses with the bass and the trackpad starts to play.
 
 | Control | What it does |
 |---------|--------------|
-| **Bass** (default) | Replays the music's own waveform in the chosen band. Each bass period becomes one motor period at the same frequency. Above 160 Hz it adds notes that stand out from the mix and hold for 40 ms. |
-| **Punch** | Kicks become thumps that dive to the left handle; a rumble follows the bass note. |
-| **Harmony** | The trackpad sings a diatonic third above the bass (key estimated from the bass line). |
-| **Frequencies** | The live spectrum of what your Mac plays, 20 Hz to 4 kHz. The bars between the two handles glow: that's what the trackpad plays. Left handle: how deep. Right handle: how much of the song (Bass, Voices, Melody). |
-| **Intensity** | How hard the motor works. |
-| **Now playing** | Shows cliamp's track and controls it (previous, play/pause, next). If cliamp is idle, **Play** starts one of your playlists through its headless daemon. |
+| **Planet** | On and off. Hover it to turn the power icon toward you. |
+| **Range** | The live spectrum of what your Mac plays, 20 Hz to 4 kHz. Drag the handles, or draw across the bars, to pick what the trackpad plays: Deep (bass), Voices, Melody. Bass replays the music's own waveform, one motor period per bass period; above 160 Hz, notes that stand out from the mix ride along. |
+| **Strength** | How hard the motor works. |
+| **Overdrive** | Kicks hit harder, with extra rumble, and the planet headbangs harder. |
+| **Now playing** | Spotify, Music or [cliamp](https://github.com/bjarneo/cliamp): track, seek, previous, play/pause, next. The source menu switches players and cliamp stations. |
+| **Widget** | The corner icon turns megabass into just the planet, in a small floating window; controls show on hover. |
+| **Dice** | A new random planet for the current song. |
 
 ## The planet
 
 The power button is a small procedural world, hashed from the station (or the Spotify/Music song):
 12 types (gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno,
 star), fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
-react to the music. Around it, vizamp's particle ridge bent into a circle, pulses up the stalks,
-sparks under the planet's gravity and a MilkDrop feedback layer that leans toward your cursor.
-Hover the planet for its style code. `--gallery` shows every type.
+react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
+and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
+Around it: vizamp's particle ridge bent into a circle, pulses up the stalks, sparks under the
+planet's gravity, stalks and ridge glowing like hot metal, and a MilkDrop feedback layer that leans
+toward your cursor. Hover the planet for its style code. `--gallery` shows every type.
 
 <p align="center"><img src="shots/planets.png" width="560" alt="All megabass planet types: gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno and star"></p>
 
