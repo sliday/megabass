@@ -15,6 +15,8 @@ final class RingSim {
         var air: Bool, size: Double, age: Double, life: Double
         var spark: Double, ground: Double, restitution: Double, drag: Double
         var px: Double, py: Double, drawn: Bool
+        /// Own brightness: a launched spark stays lit while it flies; resting grains follow the music slowly.
+        var glow: Double = 0
     }
 
     var levels: [Double] = []
@@ -109,22 +111,32 @@ final class RingSim {
         let r = surface(th) + size / 2 + (rest ? 0 : rand(1, 3))
         return Grain(th: th, r: r, vr: rest ? 0 : rand(4, 12), vt: rest ? 0 : rand(-8, 8), air: !rest, size: size,
                      age: rest ? rand(0, 1) : 0, life: rand(7.5, 22), spark: 0, ground: surface(th),
-                     restitution: rand(0.35, 0.65), drag: rand(0.45, 0.9), px: 0, py: 0, drawn: false)
+                     restitution: rand(0.35, 0.65), drag: rand(0.25, 0.6), px: 0, py: 0, drawn: false,
+                     glow: 0)
     }
 
     private func advanceGrains(_ dt: Double) {
-        let gravity = 70.0                                        // light: sparks drift out before falling
         for i in grains.indices {
             var g = grains[i]
             g.age += dt
             g.spark = max(0, g.spark - dt)
-            if g.age > g.life || !g.r.isFinite { grains[i] = newGrain(rest: false); continue }
+            // Recycle only grains that are resting and already dark: nothing pops in or out.
+            if (g.age > g.life && !g.air && g.glow < 0.03) || !g.r.isFinite { grains[i] = newGrain(rest: true); continue }
+            // The button is a planet: pull grows toward it (inverse square, ~120 pt/s² at the surface).
+            let gravity = 120 * pow(base / max(base * 0.8, g.r), 2)
+            if g.air {
+                g.glow *= exp(-dt / 2.5)                              // a flying spark cools slowly
+            } else {
+                let target = floorFade(level(at: g.th)) * 0.45
+                g.glow += (target - g.glow) * (1 - exp(-dt / (target > g.glow ? 0.15 : 1.2)))
+            }
             let ground = surface(g.th)
             let rising = (ground - g.ground) / dt                 // outward speed of the ridge here
             if !g.air {
                 if rising > 7 {
                     let kick = min(110, rising * 1.8 + 8)
                     g.air = true; g.vr = kick; g.vt = rand(-0.18, 0.18) * kick
+                    g.glow = max(g.glow, 0.85)
                 } else if g.ground - ground > 0.45 {
                     g.air = true; g.vr = 0
                 } else {
@@ -136,7 +148,7 @@ final class RingSim {
                 g.vr = max(-72, g.vr - gravity * dt)
                 g.r += g.vr * dt
                 g.th += g.vt * dt / max(20, g.r)
-                if g.r > escape { grains[i] = newGrain(rest: false); continue }
+                if g.r > escape { grains[i] = newGrain(rest: true); continue }
                 let land = surface(g.th) + g.size / 2
                 if g.r <= land, g.vr < rising {
                     g.r = land
@@ -157,6 +169,7 @@ final class RingSim {
             grains[i].vt = rand(-50, 50)
             grains[i].air = true
             grains[i].spark = rand(0.2, 0.34)
+            grains[i].glow = 1
         }
     }
 
@@ -175,8 +188,11 @@ final class RingSim {
         grains[i].vt = rand(-6, 6)
         grains[i].air = true
         grains[i].spark = rand(0.15, 0.3)
+        grains[i].glow = 0.9
         grains[i].drawn = false
     }
+
+    private func floorFade(_ v: Double) -> Double { let t = min(1, max(0, v / 0.09)); return t * t * (3 - 2 * t) }
 
     private func angularDistance(_ a: Double, _ b: Double) -> Double {
         let d = abs(a - b).truncatingRemainder(dividingBy: 2 * .pi)
@@ -204,11 +220,14 @@ struct RingVisualizer: View {
     private let sim = RingSim.shared
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 45, paused: !engine.enabled)) { tl in
+        TimelineView(.animation(minimumInterval: 1.0 / 45, paused: !engine.enabled && !engine.afterglow)) { tl in
             Canvas { ctx, size in
                 let c = CGPoint(x: size.width / 2, y: size.height / 2)
-                guard engine.enabled else { drawIdle(ctx, c); return }
-                sim.step(now: tl.date.timeIntervalSinceReferenceDate, spectrum: engine.spectrum, kick: engine.kickPulse)
+                if !engine.enabled { drawIdle(ctx, c) }
+                guard engine.enabled || engine.afterglow else { return }
+                // Switched off: keep simulating with silence so whatever is in flight falls back.
+                let input = engine.enabled ? engine.spectrum : Array(repeating: 0, count: max(1, engine.spectrum.count))
+                sim.step(now: tl.date.timeIntervalSinceReferenceDate, spectrum: input, kick: engine.enabled ? engine.kickPulse : 0)
                 draw(ctx, c)
             }
         }
@@ -280,7 +299,8 @@ struct RingVisualizer: View {
             let p = pt(c, g.th, g.r)
             let lv = sim.level(at: g.th)
             let color = g.spark > 0 ? Heat.color(min(0.7, 0.35 + g.spark)) : Heat.color(0.3 + sim.heat(at: g.th) * 0.8)
-            let visibility = g.spark > 0 ? 0.9 * min(1, g.spark / 0.12) : floorFade(lv) * (g.air ? 0.85 : 0.4)
+            let visibility = max(g.spark > 0 ? 0.9 * min(1, g.spark / 0.12) : 0, g.glow)
+            _ = lv
             let fade = min(1, g.age / 0.15) * max(0, min(1, (sim.escape - g.r) / (sim.escape - sim.fadeFrom)))
             let size = g.size + (g.spark > 0 ? 0.6 : 0)
             // Motion blur: a streak back along the velocity (radial + tangential) over ~90 ms,

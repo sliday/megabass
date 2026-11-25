@@ -7,6 +7,8 @@ public final class Engine: ObservableObject {
     public enum Source: Equatable { case none, system, demo }
 
     @Published public private(set) var enabled = false
+    /// True for a few seconds after switching off, so the visualizer can let particles fall.
+    @Published public private(set) var afterglow = false
     @Published public var mode: BassMode { didSet { voice?.mode = mode; defaults.set(mode.rawValue, forKey: "mode") } }
     @Published public var intensity: Double { didSet { voice?.intensity = Float(intensity); defaults.set(intensity, forKey: "intensity") } }
     /// Sub band cutoff, Hz: how much of the low end drives the rumble.
@@ -78,6 +80,13 @@ public final class Engine: ObservableObject {
             startMeters()
             if !demo.playing { startSystem() }
         } else {
+            if enabled {
+                afterglow = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    guard let self, !self.enabled else { return }
+                    self.afterglow = false
+                }
+            }
             enabled = false
             demo.stop()
             tap.stop()
