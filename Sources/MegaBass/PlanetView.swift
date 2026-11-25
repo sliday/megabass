@@ -14,6 +14,7 @@ final class PlanetSpin {
     private(set) var omega = 0.2
     private var nod = 0.0, nodV = 0.0, lastKick = 0.0
     private var last = 0.0
+    private var intensity = SongIntensity()
 
     // Beat tracking: tempo from kick intervals (folded into 60-180 BPM, median), and a beat clock
     // phase-locked to kicks that land near a predicted beat, so it keeps time through weak kicks.
@@ -43,9 +44,9 @@ final class PlanetSpin {
             nod *= exp(-dt * 8)
             return lon
         }
-        // Heavy: speed eases toward 0.6-2.6x the base rate over ~4 s.
-        let target = rate * (0.6 + min(1, energy * 2.8) * 2.0)
-        omega += (target - omega) * min(1, dt / 4)
+        // Heavy: speed follows the song's overall intensity, 0.4-3x the base rate, over ~3 s.
+        let target = rate * (0.4 + 2.6 * intensity.step(energy: energy, dt: dt))
+        omega += (target - omega) * min(1, dt / 3)
         lon += omega * dt
         // Tempo: intervals between kicks, folded into 60-180 BPM, median of the last 12.
         let isKick = kick > lastKick + 0.35
@@ -103,6 +104,25 @@ final class PlanetSpin {
 
     /// How far the surface turns in one frame, as a fraction of a full turn (for motion blur).
     var blurTurn: Double { abs(omega) / 30 / (2 * .pi) }
+}
+
+/// The song's overall intensity, 0...1: loudness over ~2 s against the song's own quiet and loud
+/// parts (a floor and a peak that adapt over ~30 s), scaled by absolute level so silence stays slow.
+/// A steady song sits near the middle; its chorus pushes toward 1, a quiet verse toward 0.
+struct SongIntensity {
+    private(set) var value = 0.0
+    private var smooth = 0.0, floor = 0.0, peak = 0.0, seeded = false
+
+    mutating func step(energy e: Double, dt: Double) -> Double {
+        smooth += (e - smooth) * min(1, dt / 2)
+        if !seeded, smooth > 0.02 { floor = smooth; peak = smooth; seeded = true }
+        peak = max(smooth, peak - dt * 0.008)
+        floor = min(smooth, floor + dt * 0.008)
+        let span = max(0.15, peak - floor)
+        let rel = max(0, min(1, 0.5 + (smooth - (peak + floor) / 2) / span))
+        value = min(1, smooth / 0.35) * (0.35 + 0.65 * rel)
+        return value
+    }
 }
 
 /// The power button as a small gas giant: banded surface in the station's palette that flows like
