@@ -415,6 +415,8 @@ final class PlanetTextures {
         return tex
     }
 
+    static let sinTable: [Float] = (0..<1024).map { sin(Float($0) / 1024 * 2 * .pi) }
+
     /// Textures kept (the app shows one or two planets; the gallery shows them all).
     var capacity = 6
 
@@ -466,10 +468,49 @@ final class PlanetTextures {
         // On: the icon emits light in the palette's brightest colour (unshaded), with a halo.
         let iconLight = Self.rgb(iconColor)
         let iconBase: SIMD3<Float> = on ? iconLight + (SIMD3<Float>(repeating: 1) - iconLight) * 0.2 : SIMD3(0.62, 0.62, 0.64)
+        // Living planets: animated layers where they fit the world (wobble carries the music's pulse).
+        let kind = tex.kind
+        let flows = kind == .gasGiant || kind == .toxic, floes = kind == .ice, lava = kind == .inferno
+        let boils = star, flickers = kind == .radiated, aurora = kind == .tundra
+        let shimmer = kind == .ocean || kind == .terran || kind == .jungle, storms = kind == .jungle
+        let auroraTint = SIMD3<Float>(0.25, 1, 0.6) * 0.6 + rimTint * 0.4
+        /// sin() by table (1024 steps): the animated layers call it once per pixel per frame.
+        let sinTable = Self.sinTable
+        func fsin(_ x: Float) -> Float { sinTable[Int(x * 162.974_66) & 1023] }
+        /// Cheap integer hash to 0...1 (no trig in the hot loop).
+        func hash01(_ a: Int32, _ b: Int32, _ s: UInt32) -> Float {
+            var h = UInt32(bitPattern: a) &* 0x9E37_79B1 ^ UInt32(bitPattern: b) &* 0x85EB_CA77 ^ s
+            h ^= h >> 15; h = h &* 0x2C1B_3C6D; h ^= h >> 12; h = h &* 0x297A_2D39; h ^= h >> 15
+            return Float(h & 0xFFFF) / 65535
+        }
+        /// Distance to the nearest and second-nearest cell point; cells wrap every 16 along x.
+        /// Squared distances in the loop, one hash per cell (two coordinates from its bits).
+        func cells(_ x: Float, _ y: Float) -> (Float, Float) {
+            let ix = Int32(floor(x)), iy = Int32(floor(y))
+            var f1: Float = 81, f2: Float = 81
+            for dy in Int32(-1)...1 {
+                for dx in Int32(-1)...1 {
+                    let cx = ix + dx, cy = iy + dy
+                    var h = UInt32(bitPattern: cx & 15) &* 0x9E37_79B1 ^ UInt32(bitPattern: cy) &* 0x85EB_CA77
+                    h ^= h >> 15; h = h &* 0x2C1B_3C6D; h ^= h >> 13
+                    let px = Float(cx) + Float(h & 0xFFFF) / 65535 - x, py = Float(cy) + Float(h >> 16) / 65535 - y
+                    let d = px * px + py * py
+                    if d < f1 { f2 = f1; f1 = d } else if d < f2 { f2 = d }
+                }
+            }
+            return (f1.squareRoot(), f2.squareRoot())
+        }
         for i in 0..<(n * n) {
             guard inside[i] else { pixels[i] = 0; continue }
             let u0 = lonBase[i]
             var u = Int(u0 + shift) % W; if u < 0 { u += W }
+            // Gas bands drift at their own speeds by latitude (as real gas giants do), swaying back and
+            // forth within a few degrees so they never shear apart.
+            if flows {
+                let la = latF[i]
+                let off = fsin(la * 5.3) * 25 * fsin(tt * 0.15) + fsin(la * 11 + 1) * 8 * fsin(tt * 0.23 + 2)
+                u = ((u + Int(off)) % W + W) % W
+            }
             var uc = Int(u0 + cloudShift) % W; if uc < 0 { uc += W }
             let v = Int(latIdx[i])
             let row = v * W
@@ -479,6 +520,13 @@ final class PlanetTextures {
                 let b = Int(blurPx)
                 c = (c + tex.surface[row + (u + b / 2) % W] + tex.surface[row + (u - b / 2 + W) % W]
                        + tex.surface[row + (u + b) % W]) * 0.25
+            }
+            // Ice: floes drifting on dark water; the cracks between them open wider when the music is loud.
+            if floes {
+                let lonT = (u0 + shift) / Float(W) * 16 + tt * 0.06
+                let (f1, f2) = cells(lonT, latF[i] * 5 + sin(tt * 0.3) * 0.08)
+                let crack = smooth(0, 0.05 + 0.08 * wobble, f2 - f1)
+                c = c * (0.55 + 0.45 * crack) + SIMD3<Float>(0.04, 0.1, 0.2) * (1 - crack)
             }
             let cl = tex.clouds[row + uc]
             c = c + (SIMD3<Float>(repeating: 0.97) - c) * cl
@@ -508,7 +556,11 @@ final class PlanetTextures {
                 }
                 // Specular: glossy water and ice catch the sun; rock stays matte.
                 let gloss = tex.spec[row + u] * (1 - cl)
-                if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss * sun) }
+                if gloss > 0.01 {
+                    // Water glints shimmer as small waves catch the sun.
+                    let twinkle: Float = shimmer && gloss > 0.5 ? (hash01(Int32(u / 3), Int32(v / 3), UInt32(tt * 8)) > 0.7 ? 1.7 : 0.75) : 1
+                    out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss * sun * twinkle)
+                }
                 // A wet eye: a crisp glint on the smooth cornea.
                 if eye { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(nrm, half)), 320) * 1.3 * sun) }
                 // Emissive: lava and radiation glow everywhere; city lights only at night.
@@ -528,8 +580,33 @@ final class PlanetTextures {
                 let glum = simd_dot(emitted, SIMD3<Float>(0.299, 0.587, 0.114))
                 emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
             }
+            // Lava waves run along the channels and surge on kicks; a star's seams boil and breathe with the
+            // bass; radiation veins flicker in patches.
+            if lava {
+                let phase: Float = tt * 2.2 + Float(u) * 0.05 + Float(v) * 0.08
+                let wave: Float = 0.5 + 0.5 * fsin(phase)
+                emitted *= 0.7 + 0.45 * wave + 0.9 * wobble
+            }
+            if boils {
+                let phase: Float = tt * 3 + tex.height[row + u] * 30
+                emitted *= 0.8 + 0.25 * fsin(phase) + 0.5 * wobble
+            }
+            if flickers { emitted *= hash01(Int32(u / 24), Int32(v / 24), UInt32(tt * 9)) > 0.35 ? 1.25 : 0.55 }
+            // Tundra: aurora curtains over the poles, strongest on the night side, livelier with the music.
+            if aurora {
+                let polar = smooth(0.95, 1.3, abs(latF[i]))
+                if polar > 0 {
+                    let lonA = (u0 + shift) / Float(W) * 2 * .pi
+                    let curtain = 0.5 + 0.5 * fsin(lonA * 9 + tt * 1.3 + fsin(lonA * 3 + tt * 0.7) * 2)
+                    emitted += auroraTint * polar * curtain * (1 - max(0, simd_dot(nrm, L))) * (0.6 + wobble)
+                }
+            }
+            // Jungle storms: lightning flickers inside the clouds on kicks.
+            if storms && cl > 0.3 && wobble > 0.35 && hash01(Int32(u / 30), Int32(v / 30), UInt32(tt * 12)) > 0.93 {
+                emitted += SIMD3<Float>(0.8, 0.85, 1) * cl * (wobble - 0.3) * 2.5
+            }
             // The fire flickers in patches, and burns hotter while the eye is focused (wobble = dilation).
-            if fire { emitted *= (0.8 + 0.3 * sin(tt * 7 + tex.height[row + u] * 40)) * (0.85 + 0.4 * (1 - wobble)) }
+            if fire { emitted *= (0.8 + 0.3 * fsin(tt * 7 + tex.height[row + u] * 40)) * (0.85 + 0.4 * (1 - wobble)) }
             out += emitted
             if mercury {
                 // Liquid metal: the view reflected off a rippling surface (ripples swell with the bass).

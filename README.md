@@ -31,7 +31,10 @@ The power button is a small procedural world, hashed from the station (or the Sp
 12 types (gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno,
 star), and about one in four songs gets a curio instead: crystal ball, 8 ball, mana orb (filled to
 the song's loudness), disco ball (beams through a haze), eyeball (it looks at your pointer), plasma globe, pearl, mercury ball or fire eye; fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
-react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
+react to the music, and they're alive: gas bands drift by latitude, ice floes drift on dark water
+(the cracks open when it's loud), lava pulses along its channels, stars boil, radiation veins
+flicker, tundras show aurora at night, sunlight glints on oceans, and jungle clouds flash with
+lightning on kicks. It spins faster as the song grows more intense, with a heavy body's inertia,
 and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
 Prominent voices (a sung or lead note) launch new satellites off its face on tiny rockets (the spent
 stage falls back), up to 10, orbiting at a height set by the note, on the same plane as its rings; when their time is up they fall back and
