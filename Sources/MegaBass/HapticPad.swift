@@ -245,6 +245,7 @@ struct WidgetView: View {
                 // The hero is laid out for 280 pt; scale it to the window.
                 PowerRing(engine: engine, planet: PlanetStyle.from(hub.planetKey), draggable: true)
                     .environment(\.planetPixelScale, min(1, side / 280))
+                    .environment(\.planetEdge, .radial)
                     .frame(width: 280, height: 280)
                     .scaleEffect(side / 280)
                     .frame(width: side, height: side)

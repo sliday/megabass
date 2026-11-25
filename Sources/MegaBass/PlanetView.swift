@@ -142,6 +142,29 @@ struct SongIntensity {
 /// halo that flares on kicks. Dark and still when megabass is off.
 struct PlanetView: View, Equatable {
     @Environment(\.planetPixelScale) private var pixelScale
+    @Environment(\.planetEdge) private var edge
+
+    /// An additive layer whose content fades to nothing before the canvas edge (see PlanetEdge).
+    private func fadedGlow(_ ctx: GraphicsContext, size: CGSize) -> GraphicsContext {
+        var g = ctx
+        let rect = CGRect(origin: .zero, size: size)
+        switch edge {
+        case .radial:
+            let c = CGPoint(x: size.width / 2, y: size.height / 2), lim = min(size.width, size.height) / 2
+            g.clipToLayer { m in
+                m.fill(Path(rect), with: .radialGradient(Gradient(stops: [.init(color: .white, location: 0), .init(color: .white, location: 0.62),
+                                                                          .init(color: .white.opacity(0), location: 0.98)]),
+                                                         center: c, startRadius: 0, endRadius: lim))
+            }
+        case .box:
+            let fade = Gradient(stops: [.init(color: .white.opacity(0), location: 0), .init(color: .white, location: 0.16),
+                                        .init(color: .white, location: 0.84), .init(color: .white.opacity(0), location: 1)])
+            g.clipToLayer { m in m.fill(Path(rect), with: .linearGradient(fade, startPoint: .zero, endPoint: CGPoint(x: size.width, y: 0))) }
+            g.clipToLayer { m in m.fill(Path(rect), with: .linearGradient(fade, startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))) }
+        }
+        g.blendMode = .plusLighter
+        return g
+    }
     /// Read live inside the timeline; not observed, so engine meter updates don't force redraws.
     let engine: Engine
     var radius: CGFloat = 48
@@ -231,8 +254,7 @@ struct PlanetView: View, Equatable {
         // Stars: light rays radiating from the core, slowly turning, longer with the bass, in a corona.
         if st.kind == .star {
             let tintStar = [0xFF5A3A, 0xFF9A3A, 0xFFD86A, 0xFFF4D6, 0xBFD8FF].map { Palettes.hex(UInt32($0)) }[st.starClass]
-            var rays = ctx
-            rays.blendMode = .plusLighter
+            let rays = fadedGlow(ctx, size: size)
             let bass = on ? OrbitSim.shared.groups[0] : 0.2
             let corona = R * 1.9
             rays.fill(Path(ellipseIn: CGRect(x: c.x - corona, y: c.y - corona, width: corona * 2, height: corona * 2)),
@@ -255,8 +277,7 @@ struct PlanetView: View, Equatable {
         // reflects the light (up left, in front), so the beams sweep, stretch and blink out as facets
         // pass the light; louder music and kicks brighten them.
         if st.kind == .disco {
-            var glow = ctx
-            glow.blendMode = .plusLighter
+            let glow = fadedGlow(ctx, size: size)
             let e = on ? min(1, OrbitSim.shared.energy * 2.2) : 0
             let haze = mix(heat, .white, 0.4), fogR = R * 2.3
             glow.fill(Path(ellipseIn: CGRect(x: c.x - fogR, y: c.y - fogR, width: fogR * 2, height: fogR * 2)),
@@ -852,6 +873,17 @@ extension EnvironmentValues {
     var planetPixelScale: Double {
         get { self[PlanetPixelScaleKey.self] }
         set { self[PlanetPixelScaleKey.self] = newValue }
+    }
+}
+
+/// How light that reaches past the planet (rays, haze) fades out before the canvas edge: toward the
+/// box's sides in the panel, in a circle in the floating widget.
+enum PlanetEdge { case box, radial }
+private struct PlanetEdgeKey: EnvironmentKey { static let defaultValue = PlanetEdge.box }
+extension EnvironmentValues {
+    var planetEdge: PlanetEdge {
+        get { self[PlanetEdgeKey.self] }
+        set { self[PlanetEdgeKey.self] = newValue }
     }
 }
 
