@@ -2,6 +2,31 @@ import AppKit
 import MegaBassCore
 import SwiftUI
 
+/// Spin of the power-icon feature on the planet's equator. Hovering rotates it to face you.
+@MainActor
+final class PlanetSpin {
+    static let shared = PlanetSpin()
+    var lon = 0.0              // icon longitude; 0 faces the camera
+    var hover = false
+    private var last = 0.0
+
+    func advance(_ t: Double, on: Bool) -> Double {
+        let dt = last == 0 ? 0 : min(0.1, t - last)
+        last = t
+        if !on {
+            lon = 0                                            // off: icon faces you, easy to find
+        } else if hover {
+            // Turn forward to the nearest facing position and hold it there.
+            let target = (lon / (2 * .pi)).rounded(.up) * 2 * .pi
+            lon += (target - lon) * min(1, dt * 7)
+            if abs(target - lon) < 0.002 { lon = target }
+        } else {
+            lon += dt * 0.35
+        }
+        return lon
+    }
+}
+
 /// The power button as a small gas giant: banded surface in the station's palette that flows like
 /// a rotating atmosphere, a drifting storm, sphere shading lit from the top-left, and an atmosphere
 /// halo that flares on kicks. Dark and still when megabass is off.
@@ -73,6 +98,21 @@ struct PlanetView: View {
             let sx = sin(lon) * R * 0.85, w = R * 0.34 * cos(lon), h = R * 0.16
             surface.fill(Path(ellipseIn: CGRect(x: c.x + sx - w / 2, y: c.y + R * 0.28 - h / 2, width: w, height: h)),
                          with: .color(mix(heat, .white, 0.35).opacity(0.75 * cos(lon))))
+        }
+
+        // The power icon, a feature on the equator: foreshortened toward the limb, hidden round the back.
+        let iconLon = PlanetSpin.shared.advance(t, on: on)
+        let facing = cos(iconLon)
+        if facing > 0 {
+            var icon = ctx
+            icon.clip(to: disc)
+            icon.translateBy(x: c.x + sin(iconLon) * R * 0.88, y: c.y)
+            icon.scaleBy(x: max(0.05, facing), y: 1)
+            icon.opacity = pow(facing, 0.6)
+            let glyph = icon.resolve(Text(Image(systemName: "power")).font(.system(size: R * 0.62, weight: .bold))
+                .foregroundColor(on ? .white : Color(white: 0.55)))
+            icon.addFilter(.shadow(color: .black.opacity(0.45), radius: 2, y: 1))
+            icon.draw(glyph, at: .zero, anchor: .center)
         }
 
         // Sphere shading: a soft specular highlight top-left, the night side bottom-right.

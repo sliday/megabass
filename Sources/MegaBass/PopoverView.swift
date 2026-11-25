@@ -136,18 +136,16 @@ struct PowerRing: View {
             Button(action: { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } }) {
                 ZStack {
                     // A small gas giant with an atmosphere; the halo spills past the 96 pt hit area.
+                    // The power icon lives on the planet's surface (see PlanetSpin).
                     PlanetView(engine: engine, radius: 48)
                         .frame(width: 124, height: 124)
-                    Image(systemName: "power")
-                        .font(.system(size: 30, weight: .bold))
-                        .foregroundStyle(engine.enabled ? .white.opacity(0.92) : Theme.secondary)
-                        .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
                 }
                 .frame(width: 96, height: 96)
                 .contentShape(Circle())
                 .scaleEffect(1 + 0.04 * engine.kickPulse)
             }
             .buttonStyle(.plain)
+            .onHover { PlanetSpin.shared.hover = $0 }
             .accessibilityLabel(engine.enabled ? "Turn megabass off" : "Turn megabass on")
         }
         .frame(width: 168, height: 168)
