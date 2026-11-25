@@ -178,10 +178,20 @@ enum Palettes {
         "ncs-phonk": (0xC2185B, 0xFF4D6D), "ncs-pop": (0xFF4081, 0xFFD740), "ncs-chill": (0x80DEEA, 0xB39DDB),
     ]
 
-    static func current(source: NowPlayingHub.Source, station: String) -> (hot: Color, heat: Color) {
+    /// Per-song colours for Spotify and Music: the hue comes from a hash of title and artist, the
+    /// second colour sits 30-55° around the wheel. Bright and saturated so it reads on the dark panel.
+    static func song(_ key: String) -> (hot: Color, heat: Color) {
+        let h = PlanetStyle.fnv1a(key)
+        let hue = Double(h & 0xFFFF) / 65535
+        let shift = (30 + Double((h >> 16) & 0xFF) / 255 * 25) / 360
+        return (Color(hue: hue, saturation: 0.78, brightness: 1),
+                Color(hue: (hue + shift).truncatingRemainder(dividingBy: 1), saturation: 0.7, brightness: 1))
+    }
+
+    static func current(source: NowPlayingHub.Source, station: String, song: String = "") -> (hot: Color, heat: Color) {
         switch source {
-        case .spotify: return (hex(0x1DB954), hex(0x1ED7A0))
-        case .music: return (hex(0xFA2D48), hex(0xFF6B81))
+        case .spotify, .music:
+            return song.isEmpty ? (source == .spotify ? (hex(0x1DB954), hex(0x1ED7A0)) : (hex(0xFA2D48), hex(0xFF6B81))) : Self.song(source.rawValue + ":" + song)
         case .cliamp:
             guard let p = stations[station] else { return megabass }
             return (hex(p.0), hex(p.1))

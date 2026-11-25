@@ -53,7 +53,22 @@ struct PlanetView: View {
                      blue: x.blueComponent + (y.blueComponent - x.blueComponent) * t)
     }
 
+    /// One frame: advance the orbits once, then draw the planet, cross-fading from the previous
+    /// style for 1.2 s when the station or song changes.
     private func draw(_ ctx: GraphicsContext, size: CGSize, t: Double) {
+        let on = engine.enabled || alwaysOn
+        OrbitSim.shared.step(t: t, kick: on ? engine.kickPulse : 0, levels: on ? RingSim.shared.levels : [], R: Double(radius), on: on)
+        guard !alwaysOn, let (from, p) = PlanetMorph.shared.update(to: style, t: t) else {
+            drawPlanet(ctx, size: size, t: t, st: style)
+            return
+        }
+        var old = ctx; old.opacity = 1 - p
+        drawPlanet(old, size: size, t: t, st: from)
+        var new = ctx; new.opacity = p
+        drawPlanet(new, size: size, t: t, st: style)
+    }
+
+    private func drawPlanet(_ ctx: GraphicsContext, size: CGSize, t: Double, st: PlanetStyle) {
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
         let R = Double(radius)
         let on = engine.enabled || alwaysOn
@@ -61,13 +76,11 @@ struct PlanetView: View {
         let disc = Path(ellipseIn: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
         let hot = on ? Theme.hot : Color(white: 0.22), heat = on ? Theme.heat : Color(white: 0.30)
         let deep = mix(hot, .black, 0.55)
-        let st = style
         let atm = st.atmosphere
-        OrbitSim.shared.step(t: t, kick: kick, levels: on ? RingSim.shared.levels : [], R: R, on: on)
 
         // Rings (if this planet has them): the far half goes behind the planet.
-        if st.rings { drawRings(ctx, c: c, R: R, front: false, color: heat, on: on) }
-        drawMoons(ctx, c: c, R: R, front: false, color: heat, on: on)
+        if st.rings { drawRings(ctx, c: c, R: R, front: false, color: heat, on: on, st: st) }
+        drawMoons(ctx, c: c, R: R, front: false, color: heat, on: on, st: st)
 
         // Thin atmosphere: a tight bright shell on the limb plus two faint outer layers.
         if on {
@@ -99,7 +112,20 @@ struct PlanetView: View {
         let look = Self.colors(st.kind)
         func tint(_ col: Color) -> Color { on ? mix(col, hot, 0.15) : mix(col, Color(white: 0.25), 0.7) }
 
-        if st.kind == .gasGiant || st.kind == .toxic {
+        // Crisp fractal surface (see PlanetTexture); the vector look below is the fallback while it bakes.
+        let textured: Bool
+        if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
+           let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on) {
+            var disc2 = ctx
+            disc2.clip(to: disc)
+            disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
+            textured = true
+        } else {
+            textured = false
+        }
+
+        if textured {
+        } else if st.kind == .gasGiant || st.kind == .toxic {
             // Banded worlds: wavy latitude bands (station palette for gas giants, sulphur for toxic).
             let tones = st.kind == .gasGiant
                 ? [deep, hot, mix(hot, heat, 0.5), heat, mix(heat, .white, 0.25), mix(hot, heat, 0.3)]
@@ -203,15 +229,16 @@ struct PlanetView: View {
             icon.draw(glyph, at: .zero, anchor: .center)
         }
 
-        // Sphere shading: a soft specular highlight top-left, the night side bottom-right.
+        // Sphere shading: a soft specular highlight top-left, the night side bottom-right
+        // (textured planets are lit per pixel, so they only get a gentler highlight).
         let light = CGPoint(x: c.x - R * 0.38, y: c.y - R * 0.42)
-        surface.fill(disc, with: .radialGradient(Gradient(colors: [.white.opacity(on ? 0.42 : 0.12), .white.opacity(0)]),
+        surface.fill(disc, with: .radialGradient(Gradient(colors: [.white.opacity(on ? (textured ? 0.18 : 0.42) : 0.12), .white.opacity(0)]),
                                                  center: light, startRadius: 0, endRadius: R * 0.75))
-        surface.fill(disc, with: .radialGradient(Gradient(stops: [
+        if !textured { surface.fill(disc, with: .radialGradient(Gradient(stops: [
             .init(color: .black.opacity(0), location: 0.45),
             .init(color: .black.opacity(on ? 0.55 : 0.75), location: 0.85),
             .init(color: .black.opacity(on ? 0.8 : 0.9), location: 1),
-        ]), center: CGPoint(x: c.x - R * 0.3, y: c.y - R * 0.3), startRadius: 0, endRadius: R * 1.45))
+        ]), center: CGPoint(x: c.x - R * 0.3, y: c.y - R * 0.3), startRadius: 0, endRadius: R * 1.45)) }
 
         // Flares: pulses leaving the surface and sparks skimming it light the planet and its
         // atmosphere layers where they are.
@@ -232,6 +259,22 @@ struct PlanetView: View {
             }
         }
 
+        // Moon shadows on the surface: light comes from the top-left, so a moon in front of the
+        // disc throws a soft shadow down-right, further the higher it floats above the surface.
+        if on {
+            var sh = ctx
+            sh.clip(to: disc)
+            for m in moons(st, R: R) where sin(m.angle) > 0 {
+                let p = moonPoint(m, tilt: planeTilt(st))
+                guard hypot(p.x, p.y) < R + m.size else { continue }
+                let lift = sin(m.angle) * m.radius * 0.5
+                let q = CGPoint(x: c.x + p.x + lift * 0.42, y: c.y + p.y + lift * 0.42)
+                let r = m.size * 2.4
+                sh.fill(Path(ellipseIn: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2)),
+                        with: .radialGradient(Gradient(colors: [.black.opacity(0.45), .black.opacity(0)]), center: q, startRadius: 0, endRadius: r))
+            }
+        }
+
         // Limb: the thin bright edge of the atmosphere on the lit side.
         if on {
             ctx.stroke(disc, with: .linearGradient(Gradient(colors: [mix(heat, .white, 0.5).opacity(0.9), heat.opacity(0.0)]),
@@ -240,8 +283,8 @@ struct PlanetView: View {
         }
 
         // Rings: the near half crosses in front of the planet.
-        if st.rings { drawRings(ctx, c: c, R: R, front: true, color: heat, on: on) }
-        drawMoons(ctx, c: c, R: R, front: true, color: heat, on: on)
+        if st.rings { drawRings(ctx, c: c, R: R, front: true, color: heat, on: on, st: st) }
+        drawMoons(ctx, c: c, R: R, front: true, color: heat, on: on, st: st)
     }
 
     /// Base colours per planet type: base (ocean/ground), two land tones, clouds, and a glow for
@@ -266,14 +309,31 @@ struct PlanetView: View {
     // MARK: Rings and moons (from the Fable brainstorm: kick moon, band-per-line rings, shepherds)
 
     /// The orbital plane: the ring's tilt, or a gentler version of the axial tilt without rings.
-    private var planeTilt: Double { style.rings ? style.ringTilt : style.tilt * 0.6 }
+    private func planeTilt(_ st: PlanetStyle) -> Double { st.rings ? st.ringTilt : st.tilt * 0.6 }
+
+    /// The moons on this planet: kick moon always, shepherds on ringed planets.
+    private struct Moon { var angle: Double; var radius: Double; var size: Double; var glow: Double; var trail: [OrbitSim.Sample]; var springy = false }
+    private func moons(_ st: PlanetStyle, R: Double) -> [Moon] {
+        let o = OrbitSim.shared
+        var out = [Moon(angle: o.moonAngle, radius: R * 1.72 + o.spring, size: 3.2, glow: 0.5 + o.flash, trail: o.moonTrail, springy: true)]
+        if st.rings {
+            out.append(Moon(angle: o.innerAngle, radius: R * 1.18, size: 1.8, glow: 0.3 + o.groups[0], trail: o.innerTrail))
+            out.append(Moon(angle: o.outerAngle, radius: R * (1.18 + st.ringWidth), size: 1.6, glow: 0.3 + o.groups[5], trail: o.outerTrail))
+        }
+        return out
+    }
+    /// A point on the orbital plane in screen space (relative to the planet centre).
+    private func moonPoint(_ m: Moon, tilt: Double) -> CGPoint {
+        let x = cos(m.angle) * m.radius, y = sin(m.angle) * m.radius * 0.24
+        return CGPoint(x: x * cos(tilt) - y * sin(tilt), y: x * sin(tilt) + y * cos(tilt))
+    }
 
     /// Ring lines follow six band groups; a kick sends a brightness ripple outward, 35 ms per line.
-    private func drawRings(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool) {
+    private func drawRings(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool, st style: PlanetStyle) {
         let orbit = OrbitSim.shared
         var g = ctx
         g.translateBy(x: c.x, y: c.y)
-        g.rotate(by: .radians(planeTilt))
+        g.rotate(by: .radians(planeTilt(style)))
         g.clip(to: Path(CGRect(x: -R * 3, y: front ? 0 : -R * 3, width: R * 6, height: R * 3)))
         let inner = R * 1.18, outer = R * (1.18 + style.ringWidth)
         let lines = 6
@@ -304,28 +364,38 @@ struct PlanetView: View {
         }
     }
 
-    /// Kick moon and shepherds; `front` draws the ones on the near side of their orbit.
-    private func drawMoons(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool) {
+    /// Kick moon and shepherds with their trails; `front` draws what is on the near side of the orbit.
+    private func drawMoons(_ ctx: GraphicsContext, c: CGPoint, R: Double, front: Bool, color: Color, on: Bool, st style: PlanetStyle) {
         let orbit = OrbitSim.shared
         var g = ctx
         g.translateBy(x: c.x, y: c.y)
-        g.rotate(by: .radians(planeTilt))
-        func moon(angle: Double, radius: Double, size: Double, glow: Double) {
-            guard (sin(angle) >= 0) == front else { return }
-            let p = CGPoint(x: cos(angle) * radius, y: sin(angle) * radius * 0.24)
-            let d = size * 2
+        g.rotate(by: .radians(planeTilt(style)))
+        for m in moons(style, R: R) {
+            // Trail: the orbit the moon actually travelled (kick jumps included), fading over 0.9 s,
+            // each piece on the side of the planet it was on.
+            if on, m.trail.count > 1 {
+                for i in 1..<m.trail.count {
+                    let a = m.trail[i - 1], b = m.trail[i]
+                    guard (sin(b.angle) >= 0) == front else { continue }
+                    let age = orbit.time - b.t
+                    guard age < 0.9 else { continue }
+                    var seg = Path()
+                    // The kick moon's trail keeps its recorded radius (kick jumps); shepherds ride their ring edge.
+                    let ra = m.springy ? a.radius : m.radius, rb = m.springy ? b.radius : m.radius
+                    seg.move(to: CGPoint(x: cos(a.angle) * ra, y: sin(a.angle) * ra * 0.24))
+                    seg.addLine(to: CGPoint(x: cos(b.angle) * rb, y: sin(b.angle) * rb * 0.24))
+                    g.stroke(seg, with: .color(color.opacity(0.55 * (1 - age / 0.9))), style: StrokeStyle(lineWidth: m.size * 0.7 * (1 - age / 0.9) + 0.3, lineCap: .round))
+                }
+            }
+            guard (sin(m.angle) >= 0) == front else { continue }
+            let p = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * 0.24)
+            let glow = on ? m.glow : 0.15
+            let d = m.size * 2
             g.fill(Path(ellipseIn: CGRect(x: p.x - d, y: p.y - d, width: d * 2, height: d * 2)),
                    with: .radialGradient(Gradient(colors: [color.opacity(0.35 * glow), color.opacity(0)]), center: p, startRadius: 0, endRadius: d))
-            g.fill(Path(ellipseIn: CGRect(x: p.x - size, y: p.y - size, width: size * 2, height: size * 2)),
+            g.fill(Path(ellipseIn: CGRect(x: p.x - m.size, y: p.y - m.size, width: m.size * 2, height: m.size * 2)),
                    with: .radialGradient(Gradient(colors: [.white, mix(color, .white, 0.3), mix(color, .black, 0.5)]),
-                                         center: CGPoint(x: p.x - size * 0.4, y: p.y - size * 0.4), startRadius: 0, endRadius: size * 1.6))
-        }
-        // Kick moon: flung out on a kick, springs back.
-        moon(angle: orbit.moonAngle, radius: R * 1.72 + orbit.spring, size: 3.2, glow: on ? 0.5 + orbit.flash : 0.2)
-        if style.rings {
-            let inner = R * 1.18, outer = R * (1.18 + style.ringWidth)
-            moon(angle: orbit.innerAngle, radius: inner, size: 1.8, glow: on ? 0.3 + orbit.groups[0] : 0.1)
-            moon(angle: orbit.outerAngle, radius: outer, size: 1.6, glow: on ? 0.3 + orbit.groups[5] : 0.1)
+                                         center: CGPoint(x: p.x - m.size * 0.4, y: p.y - m.size * 0.4), startRadius: 0, endRadius: m.size * 1.6))
         }
         // Shock rings from the kick moon: 0 to 10 pt over 200 ms, fading.
         if front && on {
@@ -340,16 +410,39 @@ struct PlanetView: View {
     }
 }
 
+/// Cross-fade between planet styles: remembers the outgoing style for 1.2 s after a change.
+@MainActor
+final class PlanetMorph {
+    static let shared = PlanetMorph()
+    private var current: PlanetStyle?
+    private var previous: PlanetStyle?
+    private var changedAt = 0.0
+
+    /// Returns the outgoing style and the progress (0...1, eased) while a change is under way.
+    func update(to style: PlanetStyle, t: Double) -> (PlanetStyle, Double)? {
+        if current == nil { current = style }
+        if current != style { previous = current; current = style; changedAt = t }
+        guard let from = previous else { return nil }
+        let x = min(1, (t - changedAt) / 1.2)
+        if x >= 1 { previous = nil; return nil }
+        return (from, x < 0.5 ? 2 * x * x : 1 - pow(-2 * x + 2, 2) / 2)
+    }
+}
+
 /// Orbit state for the rings and moons, advanced once per planet frame.
 @MainActor
 final class OrbitSim {
     static let shared = OrbitSim()
     struct Wake { var at: Double; var angle: Double; var outer: Bool }
+    struct Sample { var angle: Double; var radius: Double; var t: Double }
+    var moonTrail: [Sample] = [], innerTrail: [Sample] = [], outerTrail: [Sample] = []
+    private var trailR = 0.0
     var time = 0.0
     var kickAt = -10.0
     var groups = [Double](repeating: 0, count: 6)
     var moonAngle = 0.4, innerAngle = 1.0, outerAngle = 3.0
     var spring = 0.0, flash = 0.0
+    var energy = 0.0
     var shocks: [(at: Double, x: Double, y: Double)] = []
     var wakes: [Wake] = []
     private var springV = 0.0, lastKick = 0.0, prior = [Double](repeating: 0, count: 6)
@@ -366,10 +459,15 @@ final class OrbitSim {
                 groups[k] += (v - groups[k]) * min(1, dt * 12)
             }
         }
-        let bass = groups[0]
-        moonAngle += dt * (0.6 + bass * 0.8)
-        innerAngle += dt * 0.9                 // inner orbits run faster (Kepler)
-        outerAngle += dt * 0.55
+        // Orbital speed follows the song's overall intensity (loudness across all bands, ~1.5 s
+        // smoothing): calm passages drift, loud ones whip the moons round, and the fixed-length
+        // trail stretches on its own.
+        let loud = groups.reduce(0, +) / Double(groups.count)
+        energy += (loud - energy) * min(1, dt / 1.5)
+        let pace = 0.4 + energy * 2.2
+        moonAngle += dt * pace
+        innerAngle += dt * pace * 1.5          // inner orbits run faster (Kepler)
+        outerAngle += dt * pace * 0.9
         // Kick: fling the moon outward, flash, and fire a shock ring where it is.
         if on && kick > lastKick + 0.35 {
             kickAt = t
@@ -388,6 +486,17 @@ final class OrbitSim {
             wakes.append(Wake(at: t, angle: outer ? outerAngle : innerAngle, outer: outer))
         }
         prior = groups
+        // Trails: the positions actually flown, kept for 0.9 s.
+        moonTrail.append(Sample(angle: moonAngle, radius: R * 1.72 + spring, t: t))
+        innerTrail.append(Sample(angle: innerAngle, radius: R * 1.18, t: t))
+        outerTrail.append(Sample(angle: outerAngle, radius: R * 1.48, t: t))
+        for k in [0, 1, 2] {
+            switch k {
+            case 0: moonTrail.removeAll { t - $0.t > 0.9 }
+            case 1: innerTrail.removeAll { t - $0.t > 0.6 }
+            default: outerTrail.removeAll { t - $0.t > 0.6 }
+            }
+        }
         shocks.removeAll { t - $0.at > 0.25 }
         wakes.removeAll { t - $0.at > 0.35 }
     }

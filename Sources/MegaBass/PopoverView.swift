@@ -18,10 +18,12 @@ struct PopoverView: View {
     @ObservedObject var hub: NowPlayingHub
     @ObservedObject private var theme = ThemeAnimator.shared
 
-    private var paletteKey: String { hub.active.rawValue + ":" + hub.cliamp.station }
+    /// cliamp: one palette per station. Spotify/Music: one per song (title + artist).
+    private var songKey: String { hub.active == .cliamp ? "" : hub.now.title + "|" + hub.now.artist }
+    private var paletteKey: String { hub.active.rawValue + ":" + hub.cliamp.station + ":" + songKey }
     /// One planet per cliamp station; per track for Spotify and Music.
     private var planetKey: String {
-        hub.active == .cliamp ? "cliamp:" + (hub.cliamp.station.isEmpty ? "megabass" : hub.cliamp.station) : hub.active.rawValue + ":" + hub.now.title
+        hub.active == .cliamp ? "cliamp:" + (hub.cliamp.station.isEmpty ? "megabass" : hub.cliamp.station) : hub.active.rawValue + ":" + songKey
     }
 
     var body: some View {
@@ -64,7 +66,7 @@ struct PopoverView: View {
     }
 
     private func applyPalette() {
-        theme.go(to: Palettes.current(source: hub.active, station: hub.cliamp.station), key: paletteKey)
+        theme.go(to: Palettes.current(source: hub.active, station: hub.cliamp.station, song: songKey), key: paletteKey)
     }
 
     private var header: some View {
