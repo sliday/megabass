@@ -96,11 +96,15 @@ struct PopoverView: View {
                 .tracking(0.5)
                 .foregroundStyle(.white)
             Spacer()
-            Text(status)
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1.2)
-                .foregroundStyle(engine.enabled && engine.source != .none ? Color.white : Theme.secondary)
-                .accessibilityLabel("Status: \(status.lowercased())")
+            // Status only when it needs attention: normal states are already visible elsewhere
+            // (planet and switch show on/off, the visuals show it's listening, the player shows the demo).
+            if let alert = attention {
+                Text(alert)
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.hot)
+                    .accessibilityLabel("Status: \(alert.lowercased())")
+            }
             Button { withAnimation(.easeOut(duration: 0.2)) { layout.compact = true } } label: {
                 Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.secondary).frame(width: 20, height: 20).contentShape(Rectangle())
@@ -108,6 +112,14 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .help("Planet widget: just the planet, floating in a corner")
             .accessibilityLabel("Planet widget")
+        }
+    }
+
+    /// A status word only when something needs attention; nil in normal use.
+    private var attention: String? {
+        switch status {
+        case "NEEDS ACCESS", "ERROR", "SILENT": return status
+        default: return nil
         }
     }
 
