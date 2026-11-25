@@ -17,6 +17,8 @@ final class NowPlayingHub: ObservableObject {
     struct Snapshot: Equatable {
         var running = false, playing = false
         var title = "", artist = "", position = 0.0, duration = 0.0
+        /// The player's own id for the track (Spotify URI, Music persistent ID); empty if unknown.
+        var id = ""
     }
 
     let cliamp: CliampBridge
@@ -51,6 +53,89 @@ final class NowPlayingHub: ObservableObject {
     }
 
     var now: Snapshot { snapshot(active) }
+
+    // MARK: Favourites
+
+    /// A favourite track: where it played and how to find it again. cliamp is radio, so its id is the
+    /// station, and playing it tunes back in.
+    struct Favourite: Codable, Equatable { var source: String; var title: String; var artist: String; var id: String }
+    @Published private(set) var favourites: [Favourite] = {
+        guard let d = UserDefaults.standard.data(forKey: "favourites") else { return [] }
+        return (try? JSONDecoder().decode([Favourite].self, from: d)) ?? []
+    }() {
+        didSet { if let d = try? JSONEncoder().encode(favourites) { UserDefaults.standard.set(d, forKey: "favourites") } }
+    }
+    /// Playing through the favourites (shuffled); picking a player or a station ends it.
+    @Published private(set) var playingFavourites = false
+    private var favOrder: [Int] = [], favAt = -1, favExpected: Favourite?, favStarted = Date.distantPast
+
+    private func matches(_ f: Favourite, _ s: Source, _ snap: Snapshot) -> Bool {
+        f.source == s.rawValue && (!f.id.isEmpty && !snap.id.isEmpty && s != .cliamp ? f.id == snap.id : f.title == snap.title && f.artist == snap.artist)
+    }
+    var isFavourite: Bool { !now.title.isEmpty && favourites.contains { matches($0, active, now) } }
+
+    func toggleFavourite() {
+        let snap = now
+        guard !snap.title.isEmpty else { return }
+        if let k = favourites.firstIndex(where: { matches($0, active, snap) }) {
+            favourites.remove(at: k)
+        } else {
+            favourites.append(Favourite(source: active.rawValue, title: snap.title, artist: snap.artist,
+                                        id: active == .cliamp ? "station:" + cliamp.station : snap.id))
+        }
+    }
+
+    /// Plays the favourites in shuffled order, moving on when a track ends or the player wanders off.
+    func playFavourites() {
+        guard !favourites.isEmpty else { return }
+        favOrder = Array(favourites.indices).shuffled()
+        favAt = -1
+        playingFavourites = true
+        stepFavourites(1)
+    }
+
+    private func stepFavourites(_ by: Int) {
+        guard playingFavourites, !favourites.isEmpty else { playingFavourites = false; return }
+        favAt += by
+        if favAt >= favOrder.count || favOrder.count != favourites.count { favOrder = Array(favourites.indices).shuffled(); favAt = 0 }
+        if favAt < 0 { favAt = favOrder.count - 1 }
+        let f = favourites[favOrder[favAt] % favourites.count]
+        guard let s = Source(rawValue: f.source) else { return }
+        favExpected = f
+        favStarted = Date()
+        pinnedUntil = Date().addingTimeInterval(20)
+        active = s
+        for other in Source.allCases where other != s && snapshot(other).playing {
+            if other == .cliamp { cliamp.toggle() } else { Self.run(other, "pause") }
+        }
+        func q(_ x: String) -> String { x.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") }
+        switch s {
+        case .spotify:
+            Self.runLaunching(s, "play track \"\(q(f.id))\"")
+        case .music:
+            Self.runLaunching(s, """
+            try
+                play (some track of library playlist 1 whose persistent ID is "\(q(f.id))")
+            on error
+                play (some track of library playlist 1 whose name is "\(q(f.title))" and artist is "\(q(f.artist))")
+            end try
+            """)
+        case .cliamp:
+            let station = f.id.hasPrefix("station:") ? String(f.id.dropFirst(8)) : ""
+            if !station.isEmpty { cliamp.play(station: station) } else if !cliamp.playing { cliamp.toggle() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.poll() }
+    }
+
+    /// After a few seconds of grace: the track ended, stopped, or something else is playing.
+    private func followFavourites() {
+        guard playingFavourites, let f = favExpected, let s = Source(rawValue: f.source),
+              Date().timeIntervalSince(favStarted) > 5 else { return }
+        let snap = snapshot(s)
+        let ended = snap.duration > 0 && snap.position > snap.duration - 1.2
+        let stopped = !snap.running || (!snap.playing && snap.position < 0.5)
+        if ended || stopped || !matches(f, s, snap) { stepFavourites(1) }
+    }
 
     // MARK: Look (shared by the panel and the widget)
 
@@ -105,6 +190,7 @@ final class NowPlayingHub: ObservableObject {
                 self.querying = false
                 if self.others != result { self.others = result }
                 self.decide()
+                self.followFavourites()
             }
         }
     }
@@ -143,11 +229,12 @@ final class NowPlayingHub: ObservableObject {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.poll() }
     }
-    func next() { control(active, cliampCmd: { $0.next() }, script: "next track") }
-    func prev() { control(active, cliampCmd: { $0.prev() }, script: "previous track") }
+    func next() { if playingFavourites { stepFavourites(1) } else { control(active, cliampCmd: { $0.next() }, script: "next track") } }
+    func prev() { if playingFavourites { stepFavourites(-1) } else { control(active, cliampCmd: { $0.prev() }, script: "previous track") } }
 
     /// Makes `s` the player: pauses the others and starts or resumes it.
     func select(_ s: Source) {
+        playingFavourites = false
         pinnedUntil = Date().addingTimeInterval(20)
         active = s
         for other in Source.allCases where other != s && snapshot(other).playing {
@@ -178,14 +265,23 @@ final class NowPlayingHub: ObservableObject {
         }
     }
 
-    /// State, title, artist, position and duration (s) in one round trip.
+    /// Like `run`, but launches the player if needed (for playing a favourite).
+    private static func runLaunching(_ s: Source, _ command: String) {
+        scriptQueue.async {
+            var err: NSDictionary?
+            NSAppleScript(source: "tell application \"\(s.name)\"\n\(command)\nend tell")?.executeAndReturnError(&err)
+        }
+    }
+
+    /// State, title, artist, position, duration (s) and the track's id in one round trip.
     nonisolated private static func query(_ s: Source) -> Snapshot? {
         let durationExpr = s == .spotify ? "(duration of current track) / 1000" : "duration of current track"
+        let idExpr = s == .spotify ? "id of current track" : "persistent ID of current track"
         let src = """
         tell application "\(s.name)"
             set pState to player state as string
             if pState is "stopped" then return pState
-            return pState & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position as string) & linefeed & ((\(durationExpr)) as string)
+            return pState & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position as string) & linefeed & ((\(durationExpr)) as string) & linefeed & (\(idExpr))
         end tell
         """
         var err: NSDictionary?
@@ -194,7 +290,7 @@ final class NowPlayingHub: ObservableObject {
         func num(_ i: Int) -> Double { i < f.count ? Double(f[i].replacingOccurrences(of: ",", with: ".")) ?? 0 : 0 }
         return Snapshot(running: true, playing: f.first == "playing",
                         title: f.count > 1 ? f[1] : "", artist: f.count > 2 ? f[2] : "",
-                        position: num(3), duration: num(4))
+                        position: num(3), duration: num(4), id: f.count > 5 ? f[5] : "")
     }
 }
 

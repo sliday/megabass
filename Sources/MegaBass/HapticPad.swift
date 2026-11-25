@@ -219,12 +219,21 @@ struct WidgetView: View {
             Spacer()
             VStack(spacing: 4) {
                 if !hub.now.title.isEmpty {
-                    Text(hub.now.title).font(.system(size: max(9, side * 0.045), weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(hub.now.title).font(.system(size: max(9, side * 0.045), weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                        Button { hub.toggleFavourite() } label: {
+                            Image(systemName: hub.isFavourite ? "heart.fill" : "heart")
+                                .font(.system(size: max(8, side * 0.04), weight: .semibold))
+                                .foregroundStyle(hub.isFavourite ? Theme.hot : .white.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                        .help(hub.isFavourite ? "Remove from favourites" : "Add to favourites")
+                    }
                 }
                 HStack(spacing: 6) {
                     chip("backward.fill", "Previous track") { hub.prev() }
                     chip(hub.now.playing ? "pause.fill" : "play.fill", hub.now.playing ? "Pause" : "Play") {
-                        if hub.now.running { hub.toggle() } else { hub.select(hub.active) }
+                        if hub.now.running { hub.toggle() } else if !hub.favourites.isEmpty { hub.playFavourites() } else { hub.select(hub.active) }
                     }
                     chip("forward.fill", "Next track") { hub.next() }
                 }

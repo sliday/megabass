@@ -21,6 +21,7 @@ Click the planet to switch the trackpad on. It pulses with the bass and the trac
 | **Strength** | How hard the motor works. |
 | **Overdrive** | Kicks hit harder, with extra rumble, and the planet headbangs harder. |
 | **Now playing** | Spotify, Music or [cliamp](https://github.com/bjarneo/cliamp): track, seek, previous, play/pause, next. The source menu switches players and cliamp stations. |
+| **Heart** | Next to the title: favourite the track. With favourites saved, Play (when nothing plays) and **Play favourites** in the source menu run through them shuffled; next and previous step through the list. A cliamp favourite tunes back to its station. |
 | **Widget** | The corner icon turns megabass into just the planet, in a small floating window; controls show on hover. |
 | **Dice** | A new random planet for the current song. |
 

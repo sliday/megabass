@@ -504,7 +504,10 @@ struct NowPlaying: View {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     if now.running && !now.title.isEmpty {
-                        Text(now.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(now.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                            heart(size: 10)
+                        }
                         Text(now.artist.isEmpty ? hub.active.name : now.artist).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
                     } else {
                         Text("Nothing playing").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
@@ -515,7 +518,8 @@ struct NowPlaying: View {
                 HStack(spacing: 2) {
                     transport("backward.fill", "Previous track") { hub.prev() }
                     transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
-                        if now.running { hub.toggle() } else { hub.select(hub.active) }
+                        // Idle with favourites saved: Play plays them.
+                        if now.running { hub.toggle() } else if !hub.favourites.isEmpty { hub.playFavourites() } else { hub.select(hub.active) }
                     }
                     transport("forward.fill", "Next track") { hub.next() }
                 }
@@ -569,6 +573,19 @@ struct NowPlaying: View {
     }
 
     /// The pill: what's playing (a cliamp station, Spotify, Music). Its menu switches players and stations.
+    /// Favourite this track: a quiet outline heart that fills in the palette when set.
+    private func heart(size: CGFloat) -> some View {
+        Button { hub.toggleFavourite() } label: {
+            Image(systemName: hub.isFavourite ? "heart.fill" : "heart")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(hub.isFavourite ? Theme.hot : Theme.secondary.opacity(0.55))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(hub.isFavourite ? "Remove from favourites" : "Add to favourites")
+        .accessibilityLabel(hub.isFavourite ? "Remove from favourites" : "Add to favourites")
+    }
+
     private var sourceMenu: some View {
         Menu {
             Section("Play on") {
@@ -576,6 +593,14 @@ struct NowPlaying: View {
                     Button { hub.select(s) } label: {
                         let mark = hub.snapshot(s).playing ? "  ▸ playing" : ""
                         if s == hub.active { Label(s.name + mark, systemImage: "checkmark") } else { Text(s.name + mark) }
+                    }
+                }
+            }
+            if !hub.favourites.isEmpty {
+                Section("Favourites") {
+                    Button { hub.playFavourites() } label: {
+                        let t = "Play favourites (\(hub.favourites.count))"
+                        if hub.playingFavourites { Label(t, systemImage: "checkmark") } else { Text(t) }
                     }
                 }
             }
