@@ -13,59 +13,56 @@ struct HapticPad: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !engine.enabled)) { tl in
             Canvas { ctx, size in draw(ctx, size: size, t: tl.date.timeIntervalSinceReferenceDate) }
         }
-        .frame(height: compact ? 6 : 58)
+        .frame(height: compact ? 6 : 64)
         .accessibilityElement()
         .accessibilityLabel("Trackpad haptics")
-        .accessibilityValue(engine.hapticHz > 0 ? "\(Int(engine.hapticHz)) hertz, \(engine.hapticRate) pulses a second" : "quiet")
+        .accessibilityValue(!engine.enabled ? "off" : (engine.hapticHzShown > 0 ? "\(Int(engine.hapticHzShown)) hertz" : "waiting for music"))
     }
 
     private func draw(_ ctx: GraphicsContext, size: CGSize, t: Double) {
         let level = engine.enabled ? engine.level : 0
         let hz = engine.hapticHz
         if compact {
-            // A thin level line for the compact view.
             let w = size.width * min(1, level * 1.3)
             ctx.fill(Path(roundedRect: CGRect(x: 0, y: size.height / 2 - 1.5, width: size.width, height: 3), cornerRadius: 1.5), with: .color(.white.opacity(0.1)))
             ctx.fill(Path(roundedRect: CGRect(x: 0, y: size.height / 2 - 1.5, width: w, height: 3), cornerRadius: 1.5), with: .color(Theme.hot))
             return
         }
-        // The pad: a trackpad-shaped tile on the left, shaking with the level.
-        let padW: CGFloat = 86, padH: CGFloat = 54
-        let shake = level * 1.6
-        let jx = engine.enabled ? CGFloat(sin(t * 61) * shake) : 0, jy = engine.enabled ? CGFloat(cos(t * 47) * shake * 0.6) : 0
-        let pad = CGRect(x: 2 + jx, y: (size.height - padH) / 2 + jy, width: padW, height: padH)
-        let shape = Path(roundedRect: pad, cornerRadius: 9)
-        ctx.fill(shape, with: .linearGradient(Gradient(colors: [Color(white: 0.24), Color(white: 0.14)]),
+        // The pad: a trackpad across the card. It doesn't shake; shapes carry the motion.
+        let pad = CGRect(x: 0, y: 0, width: size.width, height: size.height)
+        let shape = Path(roundedRect: pad, cornerRadius: 10)
+        ctx.fill(shape, with: .linearGradient(Gradient(colors: [Color(white: 0.2), Color(white: 0.12)]),
                                              startPoint: CGPoint(x: pad.minX, y: pad.minY), endPoint: CGPoint(x: pad.maxX, y: pad.maxY)))
-        ctx.stroke(shape, with: .color(.white.opacity(0.14 + 0.4 * level)), lineWidth: 1)
-        // Ripples from the centre: spacing shrinks and speed grows with frequency.
+        ctx.stroke(shape, with: .color(.white.opacity(0.1 + 0.3 * level)), lineWidth: 1)
         var inside = ctx
         inside.clip(to: shape)
-        if hz > 0 && level > 0.02 {
-            let c = CGPoint(x: pad.midX, y: pad.midY)
-            let spacing = max(4, 22 - log2(max(20, hz) / 20) * 4.5)        // 20 Hz wide rings, 1 kHz tight
-            let speed = 18 + hz * 0.08
-            let phase = (t * speed).truncatingRemainder(dividingBy: spacing)
-            var r = phase
-            while r < 60 {
-                let a = (1 - r / 60) * min(1, level * 1.6)
-                inside.stroke(Path(ellipseIn: CGRect(x: c.x - r * 1.5, y: c.y - r, width: r * 3, height: r * 2)),
+        let c = CGPoint(x: pad.midX, y: pad.midY)
+        if engine.enabled, hz > 0, level > 0.02 {
+            // Ripples: spacing by frequency (wide = deep), brightness by level.
+            let spacing = max(5, 26 - log2(max(20, hz) / 20) * 5)
+            let speed = 22 + hz * 0.08
+            var r = (t * speed).truncatingRemainder(dividingBy: spacing)
+            while r < pad.width * 0.55 {
+                let a = (1 - r / (pad.width * 0.55)) * min(1, level * 1.5)
+                inside.stroke(Path(ellipseIn: CGRect(x: c.x - r * 1.6, y: c.y - r * 0.55, width: r * 3.2, height: r * 1.1)),
                               with: .color(Theme.hot.opacity(a)), lineWidth: 1.4)
                 r += spacing
             }
-            inside.fill(Path(ellipseIn: CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)),
-                        with: .color(Theme.heat.opacity(0.4 + 0.6 * level)))
+            let kick = engine.kickPulse
+            let d = 7 + 6 * kick
+            inside.fill(Path(ellipseIn: CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d)),
+                        with: .color(Theme.heat.opacity(0.5 + 0.5 * max(level, kick))))
+        } else {
+            let msg = engine.enabled ? "Waiting for music" : "Off"
+            inside.draw(Text(msg).font(.system(size: 12, weight: .medium)).foregroundColor(Theme.secondary), at: c, anchor: .center)
         }
-        // The words.
-        let x = pad.maxX + 12
-        let big = hz > 0 && level > 0.02 ? "\(Int(hz.rounded())) Hz" : (engine.enabled ? "quiet" : "off")
-        ctx.draw(Text(big).font(.system(size: 17, weight: .semibold).monospacedDigit()).foregroundColor(.white),
-                 at: CGPoint(x: x, y: size.height / 2 - 9), anchor: .leading)
-        let small = hz > 0 && level > 0.02
-            ? [engine.note.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? "", "\(engine.hapticRate) pulses/s"].filter { !$0.isEmpty }.joined(separator: " · ")
-            : "the trackpad follows the music"
-        ctx.draw(Text(small).font(.system(size: 11)).foregroundColor(Theme.secondary),
-                 at: CGPoint(x: x, y: size.height / 2 + 11), anchor: .leading)
+        // Hz, calm: bottom-right, 4 updates a second, rounded to 5 Hz, held for 1 s, then "–".
+        if engine.enabled {
+            let shown = engine.hapticHzShown
+            let text = shown > 0 ? "\(Int(shown)) Hz" : "–"
+            inside.draw(Text(text).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundColor(Theme.secondary),
+                        at: CGPoint(x: pad.maxX - 9, y: pad.maxY - 8), anchor: .bottomTrailing)
+        }
     }
 }
 

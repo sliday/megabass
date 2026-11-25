@@ -39,6 +39,7 @@ public final class HapticVoice {
     private var _intensity: Float = 0.8
     private var _delay: Double = 0
     private var _rumbleHz: Double = 45
+    private var _overdrive: Float = 0
     private var _kicks = true
     private var _status = VoiceStatus()
     private var running = false
@@ -64,6 +65,12 @@ public final class HapticVoice {
     public var rumbleHz: Double {
         get { lock.withLock { _rumbleHz } }
         set { lock.withLock { _rumbleHz = max(20, min(160, newValue)) } }
+    }
+    /// Overdrive 0...1 on top of Bass: soft-clips the haptic level (quiet bass pulls up toward loud)
+    /// and adds a diving thump on each kick, inside the bass cycles.
+    public var overdrive: Float {
+        get { lock.withLock { _overdrive } }
+        set { lock.withLock { _overdrive = max(0, min(1, newValue)) } }
     }
     public var kicksEnabled: Bool {
         get { lock.withLock { _kicks } }
@@ -237,8 +244,18 @@ public final class HapticVoice {
         while let t = toneQueue.first, t.time <= due { tone = t; toneQueue.removeFirst() }
         if tone.time < due - 0.1 { tone.hz = 0 }
         let next = cycles.first
-        let intensity = _intensity, delay = _delay
+        let intensity = _intensity, delay = _delay, drive = Double(_overdrive), floorHz = _rumbleHz
+        // Overdrive: kicks due now become thumps riding inside the bass cycles.
+        if drive > 0 {
+            while let k = pendingKicks.first, k.t <= due {
+                pendingKicks.removeFirst()
+                if due - k.t < 0.1 { kicks.append((now, Double(k.amp))) }
+            }
+        } else {
+            pendingKicks.removeAll { $0.t <= due }
+        }
         lock.unlock()
+        kicks.removeAll { now - $0.t > 0.18 }
 
         let toneAmp = tone.hz > 0 ? Double(tone.amp) * Double(intensity) : 0
         guard let c = next, c.start + delay <= now + 0.03 || toneAmp == 0 else {
@@ -266,8 +283,16 @@ public final class HapticVoice {
         }
         lock.withLock { _ = cycles.removeFirst() }
         let f = 1 / c.period
-        let bassLevel = pow(Double(c.amp), 0.8) * Double(intensity)
+        var bassLevel = pow(Double(c.amp), 0.8) * Double(intensity)
+        if drive > 0 {
+            let k = 1 + 3 * drive                                   // soft clip: tanh(k x) / tanh(k)
+            bassLevel = tanh(bassLevel * k) / tanh(k)
+        }
         var tones: [(hz: Double, amp: Double)] = [(f, bassLevel)]
+        for k in kicks where drive > 0 {
+            let age = now - k.t
+            tones.append((floorHz + (700 - floorHz) * exp(-age / 0.016), min(1, k.amp * drive * 1.3 * exp(-age / 0.07)) * Double(intensity)))
+        }
         if toneAmp > 0.03 { tones.append((tone.hz, toneAmp)) }
         let level = Float(min(1, tones.reduce(0) { $0 + $1.amp }))
         if level > 0.02 {

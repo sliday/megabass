@@ -295,7 +295,7 @@ final class PlanetTextures {
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
                 flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
-                sun: Float = 1) -> CGImage? {
+                sun: Float = 1, iconColor: Color = .white, blur: Float = 0) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let key = "\(n)|\(tilt)"
         if key != mapKey { buildMap(n: n, tilt: tilt); mapKey = key }
@@ -319,8 +319,11 @@ final class PlanetTextures {
         // Power-icon decal on the equator at texture longitude 0: it turns with the surface, bends
         // over the sphere, and is counter-rotated by the tilt so it stays upright on screen.
         let iconHalf: Float = 0.46
+        let blurPx = min(24, blur * Float(W))
         let tiltC = Float(cos(tilt)), tiltS = Float(sin(tilt))
-        let iconBase: SIMD3<Float> = on ? SIMD3(0.97, 0.97, 0.99) : SIMD3(0.62, 0.62, 0.64)
+        // On: the icon emits light in the palette's brightest colour (unshaded), with a halo.
+        let iconLight = Self.rgb(iconColor)
+        let iconBase: SIMD3<Float> = on ? iconLight + (SIMD3<Float>(repeating: 1) - iconLight) * 0.2 : SIMD3(0.62, 0.62, 0.64)
         for i in 0..<(n * n) {
             guard inside[i] else { pixels[i] = 0; continue }
             let u0 = lonBase[i]
@@ -329,6 +332,12 @@ final class PlanetTextures {
             let v = Int(latIdx[i])
             let row = v * W
             var c = tex.surface[row + u]
+            // Motion blur along the spin: average texels across the arc turned in one frame.
+            if blurPx >= 1.5 {
+                let b = Int(blurPx)
+                c = (c + tex.surface[row + (u + b / 2) % W] + tex.surface[row + (u - b / 2 + W) % W]
+                       + tex.surface[row + (u + b) % W]) * 0.25
+            }
             let cl = tex.clouds[row + uc]
             c = c + (SIMD3<Float>(repeating: 0.97) - c) * cl
             var out: SIMD3<Float>
@@ -386,14 +395,19 @@ final class PlanetTextures {
                     let gx = ex * tiltC + ny2 * tiltS, gy = -ex * tiltS + ny2 * tiltC     // upright on screen
                     let gu = gx / (2 * iconHalf) + 0.5, gv = 0.5 - gy / (2 * iconHalf)
                     let a = glyphAt(gu, gv)
-                    let shadow = glyphAt(gu - 0.035, gv - 0.035)
-                    if shadow > 0.01 { out *= 1 - shadow * 0.45 * (1 - a) }               // soft drop shadow
-                    if a > 0.01 {
-                        // Raised enamel: lit by the sun (smooth normal) with a small glint.
-                        let lam = max(0, (simd_dot(nrm, L) + 0.25) / 1.25)
-                        var badge = iconBase * (0.3 + 0.75 * lam)
-                        badge += SIMD3<Float>(repeating: pow(max(0, simd_dot(nrm, half)), 24) * 0.5)
-                        out = out + (badge - out) * a * 0.94
+                    if on {
+                        // Glowing: a soft halo from the glyph sampled at 1.25x, then the lit glyph itself.
+                        let halo = glyphAt((gu - 0.5) * 0.8 + 0.5, (gv - 0.5) * 0.8 + 0.5) * 0.5
+                            + glyphAt((gu - 0.5) * 0.65 + 0.5, (gv - 0.5) * 0.65 + 0.5) * 0.25
+                        out += iconLight * halo * (1 - a) * 0.55
+                        if a > 0.01 { out = out + (iconBase * 1.15 - out) * a }
+                    } else {
+                        let shadow = glyphAt(gu - 0.035, gv - 0.035)
+                        if shadow > 0.01 { out *= 1 - shadow * 0.45 * (1 - a) }           // soft drop shadow
+                        if a > 0.01 {
+                            let lam = max(0, (simd_dot(nrm, L) + 0.25) / 1.25)
+                            out = out + (iconBase * (0.3 + 0.75 * lam) - out) * a * 0.94
+                        }
                     }
                 }
             }

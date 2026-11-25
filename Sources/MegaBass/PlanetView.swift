@@ -2,29 +2,50 @@ import AppKit
 import MegaBassCore
 import SwiftUI
 
-/// Spin of the power-icon feature on the planet's equator. Hovering rotates it to face you.
+/// The planet's rotation: a heavy body. Its speed follows the song's intensity with inertia; with
+/// Overdrive on, every kick makes it headbang (a forward nod on a damped spring). Hovering turns
+/// the power icon to face you.
 @MainActor
 final class PlanetSpin {
     static let shared = PlanetSpin()
     var lon = 0.0              // icon longitude; 0 faces the camera
     var hover = false
+    /// Angular speed (rad/s) and the blur it implies, for the renderer.
+    private(set) var omega = 0.2
+    private var nod = 0.0, nodV = 0.0, lastKick = 0.0
     private var last = 0.0
 
-    func advance(_ t: Double, on: Bool, rate: Double = 0.2) -> Double {
+    /// Advances the spin. `rate` is the planet's own base speed; `energy` the song's loudness;
+    /// `kick` the kick pulse; `headbang` whether Overdrive is on. Returns the angle to draw.
+    func advance(_ t: Double, on: Bool, rate: Double = 0.2, energy: Double = 0, kick: Double = 0, headbang: Bool = false) -> Double {
         let dt = last == 0 ? 0 : min(0.1, t - last)
         last = t
         if !on {
-            lon = 0                                            // off: icon faces you, easy to find
-        } else if hover {
-            // Turn forward to the nearest facing position and hold it there.
+            lon = 0; omega = rate; nod = 0; nodV = 0                // off: icon faces you, easy to find
+            return 0
+        }
+        if hover {
             let target = (lon / (2 * .pi)).rounded(.up) * 2 * .pi
             lon += (target - lon) * min(1, dt * 7)
             if abs(target - lon) < 0.002 { lon = target }
-        } else {
-            lon += dt * rate
+            omega = rate
+            nod *= exp(-dt * 8)
+            return lon + nod
         }
-        return lon
+        // Heavy: speed eases toward 0.6-4x the base rate over ~2.5 s.
+        let target = rate * (0.6 + min(1, energy * 2.8) * 3.4)
+        omega += (target - omega) * min(1, dt / 2.5)
+        lon += omega * dt
+        // Headbang: a kick kicks the nod forward; a stiff, damped spring brings it back.
+        if headbang && kick > lastKick + 0.35 { nodV += 2.6 * kick }
+        lastKick = kick
+        nodV += (-70 * nod - 9 * nodV) * dt
+        nod += nodV * dt
+        return lon + nod
     }
+
+    /// How far the surface turns in one frame, as a fraction of a full turn (for motion blur).
+    var blurTurn: Double { (abs(omega) + abs(nodV)) / 30 / (2 * .pi) }
 }
 
 /// The power button as a small gas giant: banded surface in the station's palette that flows like
@@ -51,6 +72,12 @@ struct PlanetView: View {
         return Color(red: x.redComponent + (y.redComponent - x.redComponent) * t,
                      green: x.greenComponent + (y.greenComponent - x.greenComponent) * t,
                      blue: x.blueComponent + (y.blueComponent - x.blueComponent) * t)
+    }
+
+    /// The brighter of the palette pair (by luminance): the power icon's light.
+    private func brightest(_ a: Color, _ b: Color) -> Color {
+        func lum(_ c: Color) -> Double { let n = NSColor(c).usingColorSpace(.sRGB) ?? .gray; return 0.299 * n.redComponent + 0.587 * n.greenComponent + 0.114 * n.blueComponent }
+        return lum(a) >= lum(b) ? a : b
     }
 
     /// Overall loudness as sunlight: quiet passages dim the planet, loud ones bring full day.
@@ -136,7 +163,8 @@ struct PlanetView: View {
         surface.fill(disc, with: .color(deep))
         // Rotation reads as a sphere: features live in latitude/longitude, so they move fast across
         // the middle and bunch up at the limbs. The surface and the power icon share one spin.
-        let spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin)
+        let spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin, energy: OrbitSim.shared.energy,
+                                             kick: kick, headbang: engine.overdrive > 0)
         // The surface leans with the planet's axial tilt.
         surface.translateBy(x: c.x, y: c.y); surface.rotate(by: .radians(st.tilt)); surface.translateBy(x: -c.x, y: -c.y)
 
@@ -149,7 +177,8 @@ struct PlanetView: View {
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
                                                   rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
                                                   flares: on ? RingSim.shared.planetLights() : [], flareColor: mix(heat, .white, 0.35),
-                                                  icon: true, sun: Float(sunlight(on: on))) {
+                                                  icon: true, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),
+                                                  blur: Float(PlanetSpin.shared.blurTurn)) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))

@@ -49,23 +49,39 @@ struct PopoverView: View {
                 .padding(.top, 4)
             if !hub.installedSources.isEmpty { NowPlaying(hub: hub, player: hub.cliamp) }
             if engine.needsPermission { permissionRow }
-            // Everything about the trackpad, in one card that says so.
+            // Trackpad haptics: switch, what you feel, range, strength, overdrive (Fable's IA).
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("Trackpad haptics", systemImage: "hand.point.up.left")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-                    Spacer()
-                    Text(engine.enabled ? "ON" : "OFF").font(.system(size: 10, weight: .bold)).tracking(1)
-                        .foregroundStyle(engine.enabled ? Theme.hot : Theme.secondary)
+                Button { withAnimation(.easeOut(duration: 0.18)) { engine.toggle() } } label: {
+                    HStack {
+                        Label("Trackpad haptics", systemImage: "hand.point.up.left")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { engine.enabled }, set: { on in withAnimation(.easeOut(duration: 0.18)) { engine.setEnabled(on) } }))
+                            .toggleStyle(.switch).controlSize(.mini).tint(Theme.hot).labelsHidden()
+                    }
+                    .contentShape(Rectangle())
                 }
-                HapticPad(engine: engine)
-                ModePicker(mode: $engine.mode, enabled: engine.enabled)
-                LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
-                ValueSlider(label: "Intensity", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                .buttonStyle(.plain)
+                .help("Turn trackpad haptics on or off. Clicking the planet does the same.")
+                Group {
+                    HapticPad(engine: engine)
+                    LowBandControl(low: $engine.rumbleHz, high: $engine.crossover, spectrum: engine.spectrum, live: engine.enabled)
+                }
+                .opacity(engine.enabled ? 1 : 0.4)
+                ValueSlider(label: "Strength", value: $engine.intensity, range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("Overdrive").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { engine.overdrive > 0 }, set: { engine.overdrive = $0 ? 1 : 0 }))
+                            .toggleStyle(.switch).controlSize(.mini).tint(Theme.hot).labelsHidden()
+                    }
+                    Text("Kicks hit harder, with extra rumble.").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                }
+                .opacity(engine.enabled ? 1 : 0.4)
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
-            .opacity(engine.enabled ? 1 : 0.6)
             .animation(.easeOut(duration: 0.18), value: engine.enabled)
             footer
         }
@@ -261,15 +277,14 @@ struct LowBandControl: View {
     var live = false
     static let range = SpectrumAnalyzer.range
     /// Plain-language zones on the strip.
-    static let zones: [(name: String, from: Double, to: Double)] = [("Bass", 20, 160), ("Voices", 160, 1000), ("Melody", 1000, 4000)]
+    static let zones: [(name: String, from: Double, to: Double)] = [("Deep", 20, 160), ("Voices", 160, 1000), ("Melody", 1000, 4000)]
 
     /// Both handles in words, cut at the same edges as the zones on the strip.
     private var summary: String {
-        let depth = low < 45 ? "Deep bass" : (low < 90 ? "Bass" : "Upper bass")
         switch high {
-        case ...Self.zones[0].to: return depth + " only"
-        case ...Self.zones[1].to: return depth + " + voices"
-        default: return depth + ", voices + melody"
+        case ...Self.zones[0].to: return "Deep bass only"
+        case ...Self.zones[1].to: return "Bass + voices"
+        default: return "Whole song"
         }
     }
     private var hzText: String {
@@ -279,13 +294,13 @@ struct LowBandControl: View {
     var body: some View {
         VStack(spacing: 6) {
             HStack {
-                Text("Frequencies").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
+                Text("Range").font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
                 Spacer()
                 Text(summary).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
             }
             BandStrip(low: $low, high: $high, spectrum: spectrum, live: live)
         }
-        .help("The trackpad plays \(hzText). Left handle: how deep. Right handle: how much of the song. Above the bass it only plays notes that stand out and last.")
+        .help("Left handle: how deep. Right handle: how much of the song. (\(hzText))")
     }
 }
 

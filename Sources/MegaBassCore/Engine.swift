@@ -11,6 +11,11 @@ public final class Engine: ObservableObject {
     @Published public private(set) var afterglow = false
     @Published public var mode: BassMode { didSet { voice?.mode = mode; defaults.set(mode.rawValue, forKey: "mode") } }
     @Published public var intensity: Double { didSet { voice?.intensity = Float(intensity); defaults.set(intensity, forKey: "intensity") } }
+    /// Overdrive on top of Bass, 0...1 (see HapticVoice.overdrive).
+    @Published public var overdrive: Double { didSet { voice?.overdrive = Float(overdrive); defaults.set(overdrive, forKey: "overdrive") } }
+    /// A calm version of the motor frequency for display: 4 updates a second, eased, rounded to 5 Hz.
+    @Published public private(set) var hapticHzShown: Double = 0
+    private var lastHapticAt = 0.0
     /// Sub band cutoff, Hz: how much of the low end drives the rumble.
     @Published public var crossover: Double { didSet { pipeline.crossover = crossover; defaults.set(crossover, forKey: "crossover") } }
     /// Lowest motor frequency, Hz: the rumble plays the bass note in the octave above this.
@@ -44,7 +49,8 @@ public final class Engine: ObservableObject {
 
     /// `restore`: switch on at launch if megabass was on when it last ran.
     public init(restore: Bool = true) {
-        mode = BassMode(rawValue: defaults.string(forKey: "mode") ?? "") ?? .bass
+        mode = .bass                                       // Bass is the one mode; Punch lives on as Overdrive
+        overdrive = defaults.object(forKey: "overdrive") as? Double ?? 0
         intensity = defaults.object(forKey: "intensity") as? Double ?? 0.8
         crossover = defaults.object(forKey: "crossover") as? Double ?? 100
         rumbleHz = defaults.object(forKey: "rumbleHz") as? Double ?? 45
@@ -152,6 +158,7 @@ public final class Engine: ObservableObject {
             v.mode = mode
             v.intensity = Float(intensity)
             v.rumbleHz = rumbleHz
+            v.overdrive = Float(overdrive)
             voice = v
             pipeline.voice = v
             problem = nil
@@ -209,7 +216,7 @@ public final class Engine: ObservableObject {
     private func stopMeters() {
         meterTimer?.invalidate()
         meterTimer = nil
-        level = 0; bassLevel = 0; note = ""; kickPulse = 0; hapticHz = 0; hapticRate = 0
+        level = 0; bassLevel = 0; note = ""; kickPulse = 0; hapticHz = 0; hapticRate = 0; hapticHzShown = 0
         history = Array(repeating: 0, count: history.count)
         spectrum = Array(repeating: 0, count: spectrum.count)
     }
@@ -221,6 +228,14 @@ public final class Engine: ObservableObject {
         level = level * 0.5 + Double(s.level) * 0.5
         hapticHz = s.level > 0.02 ? s.hz : 0
         hapticRate = s.actuationsPerSecond
+        if hapticHz > 0 { lastHapticAt = Clock.now() }
+        if frameTick % 8 == 0 {                                // ~4 times a second
+            if hapticHz <= 0 { if Clock.now() - lastHapticAt > 1 { hapticHzShown = 0 } }   // hold 1 s, then "–"
+            else {
+                let eased = hapticHzShown <= 0 ? hapticHz : hapticHzShown * 0.6 + hapticHz * 0.4
+                hapticHzShown = (eased / 5).rounded() * 5
+            }
+        }
         bassLevel = bassLevel * 0.6 + Double(max(f.sub, f.bass)) * 0.4
         note = s.noteName
         let sinceKick = Clock.now() - s.kickAt
