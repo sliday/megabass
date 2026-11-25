@@ -586,12 +586,23 @@ struct NowPlaying: View {
     /// Previous, play/pause, next.
     private func controls(_ now: NowPlayingHub.Snapshot) -> some View {
         HStack(spacing: 2) {
+            // Shuffle on the left, an equal space on the right keeps play centred.
+            Button { hub.toggleShuffle() } label: {
+                Image(systemName: "shuffle").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(now.shuffle ? Theme.hot : Theme.secondary.opacity(0.7))
+                    .frame(width: 26, height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(now.shuffle ? "Shuffle is on" : "Shuffle is off")
+            .accessibilityLabel("Shuffle")
+            .accessibilityValue(now.shuffle ? "on" : "off")
             transport("backward.fill", "Previous track") { hub.prev() }
             transport(now.playing ? "pause.fill" : "play.fill", now.playing ? "Pause" : "Play") {
                 // Idle with favourites saved: Play plays them.
                 if now.running { hub.toggle() } else if !hub.favourites.isEmpty { hub.playFavourites() } else { hub.select(hub.active) }
             }
             transport("forward.fill", "Next track") { hub.next() }
+            Color.clear.frame(width: 26, height: 26)
         }
     }
 

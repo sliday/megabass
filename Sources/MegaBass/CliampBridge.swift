@@ -12,6 +12,7 @@ final class CliampBridge: ObservableObject {
     @Published private(set) var artist = ""
     @Published private(set) var position = 0.0
     @Published private(set) var duration = 0.0
+    @Published private(set) var shuffle = false
     @Published private(set) var playlists: [String] = []
     /// cliamp radio channels (radio.cliamp.stream): id and display name.
     @Published private(set) var stations: [(id: String, name: String)] = []
@@ -51,6 +52,7 @@ final class CliampBridge: ObservableObject {
         command(["remote", "call", "seek.absolute", "--params", "{\"value\":\(max(0, seconds))}", "--wait"])
     }
     func next() { command(["next"]) }
+    func toggleShuffle() { shuffle.toggle(); command(["shuffle", "toggle"]) }
     func prev() { command(["prev"]) }
 
     /// Plays a playlist: through the running player, or by starting cliamp's headless daemon.
@@ -93,6 +95,7 @@ final class CliampBridge: ObservableObject {
             self.artist = s?.track?.artist ?? ""
             self.position = s?.position ?? 0
             self.duration = s?.duration ?? 0
+            self.shuffle = s?.shuffle ?? false
             self.station = Self.stationID(s?.track?.path) ?? (self.running ? self.station : "")
         }
     }
@@ -162,5 +165,6 @@ final class CliampBridge: ObservableObject {
         let track: Track?
         let position: Double?
         let duration: Double?
+        let shuffle: Bool?
     }
 }

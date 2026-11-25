@@ -19,6 +19,7 @@ final class NowPlayingHub: ObservableObject {
         var title = "", artist = "", position = 0.0, duration = 0.0
         /// The player's own id for the track (Spotify URI, Music persistent ID); empty if unknown.
         var id = ""
+        var shuffle = false
     }
 
     let cliamp: CliampBridge
@@ -47,7 +48,7 @@ final class NowPlayingHub: ObservableObject {
     func snapshot(_ s: Source) -> Snapshot {
         if s == .cliamp {
             return Snapshot(running: cliamp.running, playing: cliamp.playing, title: cliamp.title, artist: cliamp.artist,
-                            position: cliamp.position, duration: cliamp.duration)
+                            position: cliamp.position, duration: cliamp.duration, shuffle: cliamp.shuffle)
         }
         return others[s] ?? Snapshot()
     }
@@ -213,6 +214,17 @@ final class NowPlayingHub: ObservableObject {
 
     func toggle() { control(active, cliampCmd: { $0.toggle() }, script: "playpause") }
 
+    /// Shuffle on the active player (it shows at once; the next poll confirms).
+    func toggleShuffle() {
+        switch active {
+        case .cliamp: cliamp.toggleShuffle()
+        case .spotify: Self.run(.spotify, "set shuffling to not shuffling")
+        case .music: Self.run(.music, "set shuffle enabled to not shuffle enabled")
+        }
+        if active != .cliamp, var snap = others[active] { snap.shuffle.toggle(); others[active] = snap }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.poll() }
+    }
+
     /// While you drag the progress line: the fraction under the pointer (nil when not scrubbing).
     @Published var scrub: Double?
 
@@ -277,11 +289,12 @@ final class NowPlayingHub: ObservableObject {
     nonisolated private static func query(_ s: Source) -> Snapshot? {
         let durationExpr = s == .spotify ? "(duration of current track) / 1000" : "duration of current track"
         let idExpr = s == .spotify ? "id of current track" : "persistent ID of current track"
+        let shuffleExpr = s == .spotify ? "shuffling" : "shuffle enabled"
         let src = """
         tell application "\(s.name)"
             set pState to player state as string
             if pState is "stopped" then return pState
-            return pState & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position as string) & linefeed & ((\(durationExpr)) as string) & linefeed & (\(idExpr))
+            return pState & linefeed & (name of current track) & linefeed & (artist of current track) & linefeed & (player position as string) & linefeed & ((\(durationExpr)) as string) & linefeed & (\(idExpr)) & linefeed & ((\(shuffleExpr)) as string)
         end tell
         """
         var err: NSDictionary?
@@ -290,7 +303,7 @@ final class NowPlayingHub: ObservableObject {
         func num(_ i: Int) -> Double { i < f.count ? Double(f[i].replacingOccurrences(of: ",", with: ".")) ?? 0 : 0 }
         return Snapshot(running: true, playing: f.first == "playing",
                         title: f.count > 1 ? f[1] : "", artist: f.count > 2 ? f[2] : "",
-                        position: num(3), duration: num(4), id: f.count > 5 ? f[5] : "")
+                        position: num(3), duration: num(4), id: f.count > 5 ? f[5] : "", shuffle: f.count > 6 && f[6] == "true")
     }
 }
 
