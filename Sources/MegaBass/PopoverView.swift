@@ -566,7 +566,7 @@ struct NowPlaying: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+        .background(ZStack { RoundedRectangle(cornerRadius: 10).fill(Theme.panel); PlanetSpill() })
     }
 
     /// The pill: what's playing (a cliamp station, Spotify, Music). Its menu switches players and stations.

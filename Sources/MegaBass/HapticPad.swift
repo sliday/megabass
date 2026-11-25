@@ -102,6 +102,32 @@ struct BackgroundGlow: View, Equatable {
     }
 }
 
+/// The planet's light spilling onto the top of the card below it: a soft gradient and a bright top
+/// edge in the palette, as strong as the planet is bright (the song's loudness), flashing on kicks.
+struct PlanetSpill: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24)) { _ in
+            Canvas { ctx, size in
+                let o = OrbitSim.shared
+                let a = min(0.45, 0.05 + 0.22 * min(1, o.energy * 2.2) + 0.15 * o.flash)
+                let col = Theme.hot, mid = size.width / 2
+                ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .linearGradient(Gradient(colors: [col.opacity(a * 0.7), col.opacity(0)]),
+                                               startPoint: CGPoint(x: mid, y: 0), endPoint: CGPoint(x: mid, y: min(size.height, 80))))
+                ctx.fill(Path(ellipseIn: CGRect(x: mid - 130, y: -70, width: 260, height: 140)),
+                         with: .radialGradient(Gradient(colors: [col.opacity(a), col.opacity(0)]), center: CGPoint(x: mid, y: 0), startRadius: 0, endRadius: 130))
+                var edge = Path()
+                edge.move(to: CGPoint(x: 10, y: 0.5)); edge.addLine(to: CGPoint(x: size.width - 10, y: 0.5))
+                ctx.stroke(edge, with: .linearGradient(Gradient(colors: [col.opacity(0), col.opacity(min(1, a * 1.8)), col.opacity(0)]),
+                                                       startPoint: .zero, endPoint: CGPoint(x: size.width, y: 0)), lineWidth: 1)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 /// Soundwave phase for the trackpad visual: accumulated per frame, wavelength eased.
 @MainActor
 final class WavePhase {
