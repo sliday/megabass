@@ -534,6 +534,27 @@ struct PlanetView: View, Equatable {
         }
         return out
     }
+    /// A jagged bolt from `a` to `b`: four rounds of midpoint displacement, halving each round.
+    private static func bolt(from a: CGPoint, to b: CGPoint) -> Path {
+        var pts = [a, b]
+        var amp = Double(hypot(b.x - a.x, b.y - a.y)) * 0.22
+        for _ in 0..<4 {
+            var next = [pts[0]]
+            for i in 1..<pts.count {
+                let p = pts[i - 1], q = pts[i]
+                let dx = Double(q.x - p.x), dy = Double(q.y - p.y), len = max(0.001, hypot(dx, dy))
+                let off = Double.random(in: -amp...amp)
+                next.append(CGPoint(x: Double(p.x + q.x) / 2 - dy / len * off, y: Double(p.y + q.y) / 2 + dx / len * off))
+                next.append(q)
+            }
+            pts = next
+            amp *= 0.5
+        }
+        var path = Path()
+        path.addLines(pts)
+        return path
+    }
+
     /// A point on the orbital plane in screen space (relative to the planet centre).
     private func moonPoint(_ m: Moon, tilt: Double) -> CGPoint {
         let x = cos(m.angle) * m.radius, y = sin(m.angle) * m.radius * ringOpen
@@ -687,6 +708,39 @@ struct PlanetView: View, Equatable {
                 }
                 sparks.stroke(p, with: .linearGradient(Gradient(colors: [hot.opacity(0), hot]), startPoint: tail, endPoint: head),
                               style: StrokeStyle(lineWidth: d.size, lineCap: .round))
+            }
+        }
+        // Thunderbolts: a satellite near a prominence's fountain arcs to the nearest hot spark. The
+        // sparks live in the ring view, centred on the same point, so they map into this frame by
+        // undoing the orbital plane's tilt. Re-jagged every frame and not every frame lit: flicker.
+        if front && on {
+            let ring = RingSim.shared
+            if !ring.sprinkles.isEmpty {
+                let tilt = planeTilt(style), ct = cos(-tilt), sn = sin(-tilt)
+                let hot = ring.sprinkles.filter { ring.clock - $0.born < 1 }.map { q -> CGPoint in
+                    let sx = cos(q.th) * q.r, sy = sin(q.th) * q.r
+                    return CGPoint(x: sx * ct - sy * sn, y: sx * sn + sy * ct)
+                }
+                var zap = g
+                zap.blendMode = .plusLighter
+                var bolts = 0
+                for m in moons(style, R: R) where m.energy != nil && sin(m.angle) >= 0 && bolts < 6 {
+                    let mp = CGPoint(x: cos(m.angle) * m.radius, y: sin(m.angle) * m.radius * ringOpen)
+                    var best: CGPoint?, bestD = 24.0
+                    for p in hot {
+                        let d = hypot(p.x - mp.x, p.y - mp.y)
+                        if d < bestD { bestD = d; best = p }
+                    }
+                    guard let to = best, Double.random(in: 0...1) < 0.75 else { continue }
+                    bolts += 1
+                    let path = Self.bolt(from: mp, to: to), f = 0.5 + 0.5 * (1 - bestD / 24)
+                    let tint = mix(mix(color, Theme.hot, m.energy ?? 0), .white, 0.5)
+                    zap.stroke(path, with: .color(tint.opacity(0.35 * f)), style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
+                    zap.stroke(path, with: .color(Color.white.opacity(0.95 * f)), style: StrokeStyle(lineWidth: 0.7, lineCap: .round, lineJoin: .round))
+                    let r = 3.5 * f
+                    zap.fill(Path(ellipseIn: CGRect(x: to.x - r, y: to.y - r, width: r * 2, height: r * 2)),
+                             with: .radialGradient(Gradient(colors: [Color.white.opacity(0.8 * f), tint.opacity(0)]), center: to, startRadius: 0, endRadius: r))
+                }
             }
         }
         // Kicks and launches: a soft puff of light where the moon is, no outline.
