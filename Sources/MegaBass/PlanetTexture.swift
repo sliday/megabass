@@ -104,7 +104,7 @@ final class PlanetTexture: @unchecked Sendable {
         var glow = [RGB](repeating: .zero, count: W * H)
         var height = [Float](repeating: 0, count: W * H)
         var spec = [Float](repeating: 0, count: W * H)
-        let hasGlow = [PlanetStyle.Kind.inferno, .radiated, .star, .terran, .jungle, .ocean].contains(st.kind)
+        let hasGlow = [PlanetStyle.Kind.inferno, .radiated, .star, .terran, .jungle, .ocean, .crystal, .mana, .disco, .eyeball, .plasma].contains(st.kind)
         let starTint: RGB = [hexF(0xFF5A3A), hexF(0xFF9A3A), hexF(0xFFD86A), hexF(0xFFF4D6), hexF(0xBFD8FF)][st.starClass]
         func hex(_ v: UInt32) -> RGB { RGB(Float(v >> 16 & 0xFF) / 255, Float(v >> 8 & 0xFF) / 255, Float(v & 0xFF) / 255) }
         func mix(_ a: RGB, _ b: RGB, _ t: Float) -> RGB { a + (b - a) * max(0, min(1, t)) }
@@ -122,7 +122,7 @@ final class PlanetTexture: @unchecked Sendable {
         var lr = PlanetStyle.SplitMix64(state: PlanetStyle.fnv1a(st.key + "layer"))
         let layerPick = lr.unit()
         let layer: Int = switch st.kind {
-        case .star: 0
+        case .star, .crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury: 0
         case .gasGiant: layerPick < 0.4 ? 0 : (layerPick < 0.7 ? 3 : 4)
         default: layerPick < 0.2 ? 0 : 1 + Int(min(4.999, (layerPick - 0.2) / 0.8 * 5))
         }
@@ -198,6 +198,87 @@ final class PlanetTexture: @unchecked Sendable {
                     emit = mix(starTint, RGB(1, 1, 0.95), 0.6) * (seam * 1.4 + small * 0.45)
                     relief = 0.5 + (1 - seam) * 0.25 + (1 - f1) * 0.15
                     shine = 0
+                case .crystal:
+                    // Clear glass, a slow mist swirling inside lit in the palette.
+                    let m = fbm(perm, q * 1.4 + warp * 1.5, octaves: 5, freq: 2)
+                    let mist = smooth(0.45, 0.85, m)
+                    col = mix(hex(0x0C1018), hot * 0.25, 0.5)
+                    emit = mix(hot, RGB(1, 1, 1), 0.35) * mist * 0.75 + heat * 0.12 * (1 - absLat)
+                    relief = 0.5; shine = 1
+                case .eightBall:
+                    // Glossy black; a white disc opposite the power icon with an 8 (two rings) on it.
+                    col = hex(0x0A0A0C); relief = 0.5; shine = 1
+                    let d = acos(max(-1, min(1, -p.x)))                            // from longitude 180°, equator
+                    if d < 0.52 {
+                        let u = -p.y / 0.5, v = p.z / 0.5
+                        func ring(_ cy: Float, _ rr: Float) -> Float { smooth(0.075, 0.045, abs(hypot(u, v - cy) - rr)) }
+                        let ink = max(ring(0.27, 0.2), ring(-0.22, 0.25))
+                        col = mix(col, mix(hex(0xF4F1EA), hex(0x0A0A0C), ink), smooth(0.52, 0.49, d))
+                        shine = 0.8
+                    }
+                case .mana:
+                    // The liquid: a glowing swirl (the render fills it to a level that follows the song).
+                    let m = fbm(perm, q * 1.6 + warp * 2, octaves: 5, freq: 2.2)
+                    let swirl = 0.5 + 0.5 * sin(lon * 3 + m * 9)
+                    col = mix(hot * 0.35, heat * 0.6, swirl)
+                    emit = mix(hot, heat, swirl) * (0.45 + 0.6 * smooth(0.5, 0.85, m))
+                    relief = 0.5 + (m - 0.5) * 0.1; shine = 0.8
+                case .disco:
+                    // Mirror tiles in rows, grout between; some catch the palette, a few glint.
+                    let rows: Float = 26
+                    let rf = (lat / .pi + 0.5) * rows, row = floor(rf)
+                    let cols = max(6, floor(cos((row + 0.5) / rows * .pi - .pi / 2) * 52))
+                    let cf = lon / (2 * .pi) * cols, cell = floor(cf)
+                    let fr = rf - row, fc = cf - cell
+                    func hsh(_ k: Float) -> Float { let x = sin(row * 127.1 + cell * 311.7 + k * 74.7) * 43758.5453; return x - floor(x) }
+                    let grout = fr < 0.08 || fr > 0.92 || fc < 0.08 || fc > 0.92
+                    let tone = 0.55 + 0.45 * hsh(1), pick = hsh(2)
+                    let silver = hex(0xC8CCD2) * tone
+                    let tile = pick < 0.16 ? mix(silver, hot, 0.6) : (pick < 0.28 ? mix(silver, heat, 0.6) : silver)
+                    col = grout ? hex(0x222428) : tile
+                    relief = grout ? 0.35 : 0.5 + (hsh(3) - 0.5) * 0.25
+                    shine = grout ? 0 : 1
+                    if !grout && hsh(4) > 0.95 { emit = RGB(1, 1, 1) * 0.9 }
+                case .eyeball:
+                    // After real-time eye shaders: a warm off-white sclera that reddens toward the back with
+                    // a vein network; an iris (sized like a real one) of radial fibres, a collarette ring,
+                    // dark crypts and two tones; a dark limbal ring; a wet cornea. The iris sits where the
+                    // power icon is, and the eye turns to look at you (see EyeLook).
+                    let d = acos(max(-1, min(1, p.x)))
+                    col = mix(hex(0xEDE3D9), hex(0xD8B4A8), smooth(1.1, 2.6, d)) * (0.94 + 0.06 * fine)
+                    let veins = smooth(0.76, 0.9, ridged(perm, q * 1.2, octaves: 4, freq: 3.2))
+                    let fineVeins = smooth(0.8, 0.93, ridged(perm, q * 2.6 + 4, octaves: 3, freq: 5))
+                    col = mix(col, hex(0x9E2228), max(veins * 0.75, fineVeins * 0.45) * smooth(0.65, 1.9, d))
+                    shine = 0.55
+                    relief = 0.5 + 0.12 * smooth(0.62, 0, d)                                  // the cornea's bulge
+                    if d < 0.6 {
+                        let t = d / 0.55, phi = atan2(p.z, p.y)
+                        let fib = fbm(perm, SIMD3(cos(phi) * 6, sin(phi) * 6, t * 1.5), octaves: 3, freq: 2)
+                        let collar = smooth(0.06, 0, abs(t - 0.38 - 0.03 * sin(phi * 9)))
+                        let crypt = worley(perm, SIMD3(cos(phi) * 4, sin(phi) * 4, t * 3), freq: 3).0
+                        let zone = mix(mix(heat, hex(0xC88A3A), 0.45), hot * 0.7, smooth(0.32, 0.46, t))
+                        var iris = zone * (0.5 + 0.7 * fib) + mix(heat, RGB(1, 1, 1), 0.3) * collar * 0.25
+                        iris = iris * (1 - 0.5 * smooth(0.14, 0.04, crypt) * smooth(0.4, 0.55, t))   // crypts
+                        iris = iris * (1 - 0.75 * smooth(0.78, 1, t))                               // limbal ring
+                        col = mix(col, iris, smooth(0.58, 0.53, d))
+                        col = mix(col, hex(0x030303), smooth(0.21, 0.19, d))                         // pupil
+                        emit = iris * 0.3 * smooth(0.55, 0.3, d) * smooth(0.19, 0.23, d)
+                        shine = 1
+                    }
+                case .mercury:
+                    // Liquid metal: the look comes from reflections in the render.
+                    col = hex(0x9AA0A8); relief = 0.5; shine = 1
+                case .plasma:
+                    // Dark glass; the filaments are drawn live over it.
+                    col = hex(0x07070D) + heat * 0.05
+                    emit = heat * 0.06 * (1 - absLat * 0.5)
+                    relief = 0.5; shine = 1
+                case .pearl:
+                    // Nacre: cream with a thin-film shimmer of every hue.
+                    let t = fbm(perm, q, octaves: 3, freq: 2.5) * 1.6 + lat * 0.8
+                    let ir = RGB(0.5 + 0.5 * cos(2 * .pi * t), 0.5 + 0.5 * cos(2 * .pi * (t + 0.33)), 0.5 + 0.5 * cos(2 * .pi * (t + 0.67)))
+                    col = mix(hex(0xF1EAE0), ir, 0.22) * (0.95 + 0.05 * fine)
+                    relief = 0.5 + (fine - 0.5) * 0.04; shine = 0.9
                 case .gasGiant:
                     // Turbulent bands: latitude bent by the domain warp and the height field.
                     let latW = lat + warp.z * 0.45 + (h - 0.5) * Float(st.wave) * 6
@@ -213,9 +294,9 @@ final class PlanetTexture: @unchecked Sendable {
                         col = col * (1 - 0.4 * bowl) + RGB(repeating: 0.25) * rim
                     }
                 }
-                if st.kind != .gasGiant && st.kind != .star { col = mix(col, hot, tint) }     // a hint of the station palette
+                if st.kind != .gasGiant && st.kind != .star && !st.kind.isCurio { col = mix(col, hot, tint) }     // a hint of the station palette
                 if st.kind == .gasGiant { shine = 0.15 }
-                col = col * (0.88 + 0.24 * fine)                                                // fine grain
+                if !st.kind.isCurio { col = col * (0.88 + 0.24 * fine) }                       // fine grain
                 if layer > 0 {
                     let lp = p + layerOff
                     let d: Float
@@ -334,7 +415,8 @@ final class PlanetTextures {
     func render(_ tex: PlanetTexture, radius R: Double, tilt: Double, spin: Double, on: Bool,
                 rim rimColor: Color = .white, grade: (Color, Color)? = nil,
                 flares: [(th: Double, power: Double)] = [], flareColor: Color = .white, icon: Bool = false,
-                sun: Float = 1, iconColor: Color = .white, blur: Float = 0, pitch: Double = 0) -> CGImage? {
+                sun: Float = 1, iconColor: Color = .white, blur: Float = 0, pitch: Double = 0,
+                liquid: Float = 2, time: Double = 0, wobble: Float = 0) -> CGImage? {
         let n = Int(R * 4)                                   // diameter at 2x
         let q = (pitch / 0.004).rounded()                    // the map rebuilds only while the nod moves
         let key = "\(n)|\(tilt)|\(q)"
@@ -348,6 +430,9 @@ final class PlanetTextures {
         let half = simd_normalize(L + V)
         let rimTint = Self.rgb(rimColor)
         let star = tex.kind == .star
+        let mana = tex.kind == .mana, tt = Float(time.truncatingRemainder(dividingBy: 1000))
+        let eye = tex.kind == .eyeball, mercury = tex.kind == .mercury
+        func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = max(0, min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
         // Flares as point lights just beyond the limb, a little toward the viewer (unit-sphere space).
         let flareTint = Self.rgb(flareColor)
         let lights: [(pos: SIMD3<Float>, power: Float)] = flares.prefix(6).map { f in
@@ -407,6 +492,8 @@ final class PlanetTextures {
                 // Specular: glossy water and ice catch the sun; rock stays matte.
                 let gloss = tex.spec[row + u] * (1 - cl)
                 if gloss > 0.01 { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(bumped, half)), 36) * 0.9 * gloss * sun) }
+                // A wet eye: a crisp glint on the smooth cornea.
+                if eye { out += SIMD3<Float>(repeating: pow(max(0, simd_dot(nrm, half)), 320) * 1.3 * sun) }
                 // Emissive: lava and radiation glow everywhere; city lights only at night.
                 if tex.hasGlow {
                     let g = tex.glow[row + u]
@@ -425,6 +512,32 @@ final class PlanetTextures {
                 emitted = emitted + (hi * glum * 1.2 - emitted) * 0.3
             }
             out += emitted
+            if mercury {
+                // Liquid metal: the view reflected off a rippling surface (ripples swell with the bass).
+                // The environment: a dark sky over a palette-lit horizon, a softbox up left, and the glow
+                // ring behind the planet showing at grazing angles.
+                let w1 = sin(nrm.x * 9 + tt * 3.1) * sin(nrm.y * 7 - tt * 2.3), w2 = sin((nrm.x + nrm.y) * 13 + tt * 4.7)
+                let n2 = simd_normalize(nrm + SIMD3<Float>(w1 * 0.6 + w2 * 0.3, w2 * 0.5 - w1 * 0.3, 0) * wobble)
+                let r = n2 * (2 * n2.z) - V
+                let up = -r.y
+                let sky = SIMD3<Float>(0.05, 0.06, 0.09), ground = SIMD3<Float>(0.02, 0.02, 0.03)
+                var env = up > 0 ? rimTint * 0.35 + (sky - rimTint * 0.35) * min(1, up * 1.4)
+                                 : rimTint * 0.25 + (ground - rimTint * 0.25) * min(1, -up * 2)
+                env += rimTint * 0.8 * exp(-up * up * 60)
+                if r.x < -0.15 && r.x > -0.75 && up > 0.35 && up < 0.85 { env += SIMD3<Float>(repeating: 1.1) }
+                env += rimTint * 0.6 * max(0, -r.z)
+                out = env * SIMD3<Float>(0.86, 0.89, 0.93) * (0.85 + 0.3 * pow(1 - n2.z, 2))
+            }
+            if mana {
+                // The orb is filled to `liquid` (screen y, down positive) with a rippling surface; above
+                // it, empty dark glass with a rim; a bright meniscus where they meet.
+                let wave = liquid + 0.035 * sin(nrm.x * 7 + tt * 2.4) + 0.02 * sin(nrm.x * 13 - tt * 3.7)
+                if nrm.y < wave - 0.02 {
+                    out = SIMD3<Float>(0.025, 0.03, 0.045) + rimTint * (pow(1 - nrm.z, 2.5) * 0.35) + out * 0.06
+                } else if nrm.y < wave + 0.02 {
+                    out += (rimTint * 0.6 + SIMD3<Float>(repeating: 0.4)) * (1 - abs(nrm.y - wave) / 0.02)
+                }
+            }
             if icon {
                 // Longitude on the texture, relative to the decal, wrapped to -pi...pi.
                 var dl = (lonBase[i] + shift) / Float(W) * 2 * .pi
@@ -434,6 +547,13 @@ final class PlanetTextures {
                     let ex = dl * cosLat[i], ny2 = lat
                     let gx = ex * tiltC + ny2 * tiltS, gy = -ex * tiltS + ny2 * tiltC     // upright on screen
                     let gu = gx / (2 * iconHalf) + 0.5, gv = 0.5 - gy / (2 * iconHalf)
+                    if eye {
+                        // Caustic: the cornea focuses light onto the iris on the side away from the highlight.
+                        let rr = hypot(gx, gy)
+                        let band = smooth(0.17, 0.26, rr) * smooth(0.56, 0.42, rr)
+                        let away = max(0, (gx - gy) / max(0.001, rr * 1.414))
+                        out += out * band * away * away * 1.4
+                    }
                     let a = glyphAt(gu, gv)
                     if on {
                         // Glowing: a soft halo from the glyph sampled at 1.25x, then the lit glyph itself.

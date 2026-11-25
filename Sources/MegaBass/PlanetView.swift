@@ -273,8 +273,11 @@ struct PlanetView: View, Equatable {
         surface.fill(disc, with: .color(deep))
         // Rotation reads as a sphere: features live in latitude/longitude, so they move fast across
         // the middle and bunch up at the limbs. The surface and the power icon share one spin.
-        let spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin, energy: OrbitSim.shared.energy,
+        var spin = PlanetSpin.shared.advance(t, on: on, rate: st.spin, energy: OrbitSim.shared.energy,
                                              kick: kick, headbang: engine.overdrive > 0, beat: engine.tempo, now: Clock.now())
+        // The eyeball does not spin: it looks (at the pointer, or around).
+        let eye = st.kind == .eyeball
+        if eye { EyeLook.shared.advance(t: t); spin = EyeLook.shared.lon }
         // The surface leans with the planet's axial tilt.
         surface.translateBy(x: c.x, y: c.y); surface.rotate(by: .radians(st.tilt)); surface.translateBy(x: -c.x, y: -c.y)
 
@@ -285,10 +288,13 @@ struct PlanetView: View, Equatable {
         let textured: Bool
         if let tex = PlanetTextures.shared.texture(for: st, hot: Theme.hot, heat: Theme.heat),
            let img = PlanetTextures.shared.render(tex, radius: R, tilt: st.tilt, spin: spin, on: on,
-                                                  rim: heat, grade: st.kind == .star || !on ? nil : (hot, heat),
+                                                  rim: heat, grade: st.kind == .star || st.kind.isCurio || !on ? nil : (hot, heat),
                                                   flares: on ? RingSim.shared.planetLights() + impactLights(st) : [], flareColor: mix(heat, .white, 0.35),
                                                   icon: true, sun: Float(sunlight(on: on)), iconColor: brightest(hot, heat),
-                                                  blur: Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch) {
+                                                  blur: eye ? 0 : Float(PlanetSpin.shared.blurTurn), pitch: PlanetSpin.shared.pitch + (eye ? EyeLook.shared.pitch : 0),
+                                                  liquid: Float(0.45 - 1.2 * min(1, OrbitSim.shared.energy * 2.2) * (on ? 1 : 0.3)),   // quiet: a quarter full; loud: ~90 %
+                                                  time: OrbitSim.shared.time,
+                                                  wobble: Float(0.08 + 0.25 * min(1, OrbitSim.shared.energy * 2.2) + 0.3 * kick)) {
             var disc2 = ctx
             disc2.clip(to: disc)
             disc2.draw(Image(decorative: img, scale: 2), in: CGRect(x: c.x - R, y: c.y - R, width: R * 2, height: R * 2))
@@ -413,6 +419,25 @@ struct PlanetView: View, Equatable {
             .init(color: .black.opacity(on ? 0.8 : 0.9), location: 1),
         ]), center: CGPoint(x: c.x - R * 0.3, y: c.y - R * 0.3), startRadius: 0, endRadius: R * 1.45)) }
 
+        // Plasma globe: filaments crackle from the central electrode to the glass, brighter with the music.
+        if st.kind == .plasma {
+            var arc = ctx
+            arc.blendMode = .plusLighter
+            let tt = OrbitSim.shared.time, e = on ? min(1, OrbitSim.shared.energy * 2.2) : 0.15
+            let col = mix(heat, .white, 0.35), a0 = 0.4 + 0.6 * e
+            for k in 0..<7 {
+                let a = Double(k) * 2 * .pi / 7 + tt * (0.25 + 0.1 * sin(Double(k) * 1.7)) + 0.6 * sin(tt * 0.7 + Double(k) * 2.3)
+                let end = CGPoint(x: c.x + cos(a) * R * 0.96, y: c.y + sin(a) * R * 0.96)
+                let path = Self.bolt(from: c, to: end)
+                arc.stroke(path, with: .color(col.opacity(0.25 * a0)), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                arc.stroke(path, with: .color(Color.white.opacity(0.85 * a0)), style: StrokeStyle(lineWidth: 0.8, lineCap: .round, lineJoin: .round))
+                arc.fill(Path(ellipseIn: CGRect(x: end.x - 6, y: end.y - 6, width: 12, height: 12)),
+                         with: .radialGradient(Gradient(colors: [Color.white.opacity(0.6 * a0), col.opacity(0)]), center: end, startRadius: 0, endRadius: 6))
+            }
+            let cr = R * 0.22
+            arc.fill(Path(ellipseIn: CGRect(x: c.x - cr, y: c.y - cr, width: cr * 2, height: cr * 2)),
+                     with: .radialGradient(Gradient(colors: [Color.white.opacity(0.9), col.opacity(0.6 * a0), col.opacity(0)]), center: c, startRadius: 0, endRadius: cr))
+        }
         // Flares: pulses leaving the surface and sparks skimming it light the planet and its
         // atmosphere layers where they are.
         if on {
@@ -498,6 +523,14 @@ struct PlanetView: View, Equatable {
         case .toxic:    return (h(0x6D7A1E), h(0xB8C23A), h(0x8C9A2A), h(0xE2E86A), nil)
         case .inferno:  return (h(0x2A1512), h(0x3F1D16), h(0x1C0E0C), h(0x5A3A30), h(0xFF6A1A))
         case .star:     return (h(0xFFB347), h(0xFF8A2A), h(0xFFD27A), h(0xFFF0C0), h(0xFFF4D6))
+        case .crystal:  return (h(0x1A2233), h(0x2A3550), h(0x6A7FA8), .white, h(0xB8C8FF))
+        case .eightBall: return (h(0x0C0C0E), h(0x161618), h(0x0C0C0E), .white, nil)
+        case .mana:     return (h(0x1A2A6A), h(0x2A4AC8), h(0x4A7AFF), .white, h(0x6A9AFF))
+        case .disco:    return (h(0xA8ACB2), h(0xC8CCD2), h(0x7A7E84), .white, nil)
+        case .eyeball:  return (h(0xEFE8E0), h(0xD8CFC4), h(0xB0282A), .white, nil)
+        case .plasma:   return (h(0x0A0A14), h(0x14142A), h(0x2A2A50), .white, h(0xC88CFF))
+        case .pearl:    return (h(0xF1EAE0), h(0xE4DCD2), h(0xD8E4F0), .white, nil)
+        case .mercury:  return (h(0x9AA0A8), h(0x6A7078), h(0xC8CED6), .white, nil)
         }
     }
 
@@ -682,11 +715,11 @@ struct PlanetView: View, Equatable {
             for imp in orbit.impacts {
                 let age = orbit.time - imp.at, f = max(0, 1 - age / 0.8)
                 let p = CGPoint(x: cos(imp.angle) * R * 0.97, y: sin(imp.angle) * R * 0.97 * ringOpen)
-                let bloom = 30 + 26 * imp.power
+                let bloom = 10 + 10 * imp.power
                 flash.fill(Path(ellipseIn: CGRect(x: p.x - bloom, y: p.y - bloom, width: bloom * 2, height: bloom * 2)),
                            with: .radialGradient(Gradient(colors: [mix(color, .white, 0.5).opacity(0.45 * f * f), color.opacity(0)]),
                                                  center: p, startRadius: 0, endRadius: bloom))
-                let gr = 8 + 22 * imp.power * (0.4 + 0.6 * f)
+                let gr = 4 + 8 * imp.power * (0.4 + 0.6 * f)
                 flash.fill(Path(ellipseIn: CGRect(x: p.x - gr, y: p.y - gr, width: gr * 2, height: gr * 2)),
                            with: .radialGradient(Gradient(colors: [Color.white.opacity(f * f), mix(color, .white, 0.4).opacity(0.6 * f), color.opacity(0)]),
                                                  center: p, startRadius: 0, endRadius: gr))
@@ -703,10 +736,11 @@ struct PlanetView: View, Equatable {
                 let hot: Color
                 switch d.kind {
                 case .blast: hot = mix(color, .white, 0.3 + 0.7 * f).opacity(f)
+                case .rock: hot = Color(red: 0.42, green: 0.36, blue: 0.32).opacity(0.85 * min(1, f * 2))
                 case .exhaust: hot = Color(red: 1, green: 0.55 + 0.4 * f, blue: 0.2 + 0.5 * f).opacity(f)
                 case .stage: hot = Color(white: 0.75).opacity(0.7)
                 }
-                sparks.stroke(p, with: .linearGradient(Gradient(colors: [hot.opacity(0), hot]), startPoint: tail, endPoint: head),
+                (d.kind == .rock ? g : sparks).stroke(p, with: .linearGradient(Gradient(colors: [hot.opacity(0), hot]), startPoint: tail, endPoint: head),
                               style: StrokeStyle(lineWidth: d.size, lineCap: .round))
             }
         }
@@ -756,6 +790,34 @@ struct PlanetView: View, Equatable {
                           with: .radialGradient(Gradient(colors: [Color.white.opacity(0.45 * f), color.opacity(0)]), center: p, startRadius: 0, endRadius: r))
             }
         }
+    }
+}
+
+/// Where the eyeball looks: at the pointer when it is over the panel, otherwise idle glances. It
+/// moves in quick darts (saccades) and holds, with tiny jitters, as real eyes do.
+@MainActor
+final class EyeLook {
+    static let shared = EyeLook()
+    private(set) var lon = 0.0, pitch = 0.0
+    private var target = (lon: 0.0, pitch: 0.0), wander = (lon: 0.0, pitch: 0.0)
+    private var nextGlance = 0.0, last = 0.0
+
+    func advance(t: Double) {
+        let dt = last == 0 ? 0 : min(0.1, t - last)
+        last = t
+        var goal = wander
+        let ring = RingSim.shared
+        if let p = ring.cursor {
+            let dx = p.x - ring.ringCenter.x, dy = p.y - ring.ringCenter.y
+            goal = (max(-0.75, min(0.75, dx / 160)), max(-0.45, min(0.45, dy / 200)))
+        } else if t > nextGlance {
+            wander = (Double.random(in: -0.5...0.5), Double.random(in: -0.3...0.3))
+            nextGlance = t + Double.random(in: 0.8...2.6)
+        }
+        // Dart when the goal has moved; otherwise hold with a tiny tremor.
+        if hypot(goal.lon - target.lon, goal.pitch - target.pitch) > 0.05 { target = goal }
+        lon += (target.lon - lon) * min(1, dt * 16) + Double.random(in: -0.002...0.002)
+        pitch += (target.pitch - pitch) * min(1, dt * 16)
     }
 }
 
@@ -871,7 +933,7 @@ final class OrbitSim {
     /// point on the surface along `d` (outward) to height `h` under gravity `g` and lands when h < 0;
     /// `o` drifts sideways at `l`. Kinds: blast sparks, rocket exhaust (weightless), spent stages.
     struct Debris {
-        enum Kind { case blast, exhaust, stage }
+        enum Kind { case blast, rock, exhaust, stage }
         var bx: Double, by: Double, dx: Double, dy: Double, h: Double, vh: Double, g: Double
         var ox = 0.0, oy = 0.0, lx: Double, ly: Double, born: Double, life: Double, size: Double, kind: Kind
         var x: Double { bx + dx * h + ox }
@@ -888,9 +950,10 @@ final class OrbitSim {
         oy -= 0.7                                                    // a little upward on screen
         let n = max(0.01, hypot(ox, oy)); ox /= n; oy /= n
         for _ in 0..<count {
-            let side = Double.random(in: -50...50)
-            debris.append(Debris(bx: px, by: py, dx: ox, dy: oy, h: 0, vh: Double.random(in: speed), g: 300,
-                                 lx: -oy * side, ly: ox * side, born: t, life: 1.6, size: Double.random(in: 0.8...1.8), kind: .blast))
+            let side = Double.random(in: -45...45), rock = Double.random(in: 0...1) < 0.6
+            debris.append(Debris(bx: px, by: py, dx: ox, dy: oy, h: 0, vh: Double.random(in: speed) * (rock ? 0.8 : 1), g: 300,
+                                 lx: -oy * side, ly: ox * side, born: t, life: 1.6,
+                                 size: rock ? Double.random(in: 0.5...1.0) : Double.random(in: 0.35...0.8), kind: rock ? .rock : .blast))
         }
     }
     private var pendingVoices: [VoiceSpotter.Event] = []
@@ -963,8 +1026,9 @@ final class OrbitSim {
                 impacts.append((t, a, power))
                 // The blast: sparks spray from the strike and fall back onto the surface.
                 let open = PlanetSpin.shared.ringOpen
-                sparks(at: cos(a) * R * 0.97, sin(a) * R * 0.97 * open, count: 18 + Int(14 * power),
-                       speed: (40 * (0.6 + 0.4 * power))...(130 * (0.6 + 0.4 * power)), t: t)
+                // Meteorite debris: many tiny chips of dark rock and hot sparks, thrown a short way.
+                sparks(at: cos(a) * R * 0.97, sin(a) * R * 0.97 * open, count: 26 + Int(14 * power),
+                       speed: (25 * (0.6 + 0.4 * power))...(85 * (0.6 + 0.4 * power)), t: t)
                 voiceMoons.remove(at: k)
             } else {
                 voiceMoons[k].r = R; voiceMoons[k].vr = 0

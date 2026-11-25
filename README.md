@@ -29,7 +29,8 @@ Click the planet to switch the trackpad on. It pulses with the bass and the trac
 
 The power button is a small procedural world, hashed from the station (or the Spotify/Music song):
 12 types (gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno,
-star), fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
+star), and about one in four songs gets a curio instead: crystal ball, 8 ball, mana orb (filled to
+the song's loudness), disco ball, eyeball (it looks at your pointer), plasma globe, pearl or mercury ball; fractal surfaces with bump and specular lighting, clouds, city lights, rings and moons that
 react to the music. It spins faster as the song grows more intense, with a heavy body's inertia,
 and headbangs in half time: fully down on beats 1 and 3, at the tempo `TempoTracker` hears.
 Prominent voices (a sung or lead note) launch new satellites off its face on tiny rockets (the spent
@@ -40,7 +41,7 @@ Around it: vizamp's particle ridge bent into a circle, pulses up the stalks, spa
 planet's gravity, stalks and ridge glowing like hot metal, and a MilkDrop feedback layer that leans
 toward your cursor. Hover the planet for its style code. `--gallery` shows every type.
 
-<p align="center"><img src="shots/planets.png" width="560" alt="All megabass planet types: gas giant, terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno and star"></p>
+<p align="center"><img src="shots/planets.png" width="560" alt="All megabass planet types and curios"></p>
 
 Can't see the menu-bar icon? A menu-bar manager such as Bartender, or the notch, may hide it.
 Open megabass again from Spotlight, Alfred or Finder and its panel appears as a floating window.

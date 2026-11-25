@@ -8,9 +8,15 @@ struct PlanetStyle: Equatable {
     /// A surface feature on the sphere (continent, cloud, crater), angular radius `size`.
     struct Blob: Equatable { var lat: Double; var lon: Double; var size: Double; var shade: Double }
 
-    /// Planet classes in the spirit of 4X space games (Master of Orion and friends).
+    /// Planet classes in the spirit of 4X space games (Master of Orion and friends), plus curios:
+    /// orbs that are objects rather than worlds.
     enum Kind: String, CaseIterable {
         case gasGiant = "gas giant", terran, ocean, jungle, desert, tundra, ice, barren, radiated, toxic, inferno, star
+        case crystal = "crystal ball", eightBall = "8 ball", mana = "mana orb", disco = "disco ball", eyeball, plasma = "plasma globe", pearl
+        case mercury = "mercury ball"
+        static let worlds: [Kind] = [.gasGiant, .terran, .ocean, .jungle, .desert, .tundra, .ice, .barren, .radiated, .toxic, .inferno, .star]
+        static let curios: [Kind] = [.crystal, .eightBall, .mana, .disco, .eyeball, .plasma, .pearl, .mercury]
+        var isCurio: Bool { Kind.curios.contains(self) }
     }
 
     let key: String
@@ -71,7 +77,10 @@ struct PlanetStyle: Equatable {
         let ringLines = 8 + Int(r.unit() * 7)
         let ringGap = r.unit() < 0.6 ? 2 + Int(r.unit() * Double(max(1, ringLines - 4))) : -1
         var atmosphere = r.range(0.7, 1.4)
-        let kind = Kind.allCases[Int(r.unit() * Double(Kind.allCases.count)) % Kind.allCases.count]
+        var kind = Kind.worlds[Int(r.unit() * Double(Kind.worlds.count)) % Kind.worlds.count]
+        // About a quarter of keys get a curio instead, from their own hash: the rest keep their world.
+        var cr = SplitMix64(state: fnv1a(key + "curio"))
+        if cr.unit() < 0.25 { kind = Kind.curios[Int(cr.unit() * Double(Kind.curios.count)) % Kind.curios.count] }
         func blobs(_ n: Int, _ a: Double, _ b: Double, lat: Double = 0.95) -> [Blob] {
             (0..<n).map { _ in Blob(lat: r.range(-lat, lat), lon: r.range(0, 2 * .pi), size: r.range(a, b), shade: r.unit()) }
         }
@@ -90,12 +99,15 @@ struct PlanetStyle: Equatable {
         case .toxic:    clouds = blobs(20, 0.15, 0.4); atmosphere *= 1.6
         case .inferno:  craters = blobs(6, 0.05, 0.12); cracks = (0..<9).map { _ in crack(&r) }; atmosphere *= 0.8
         case .star:     atmosphere = 1.6
+        case .mana:     atmosphere = 0.6
+        case .plasma:   atmosphere = 0.5
+        case .crystal, .eightBall, .disco, .eyeball, .pearl, .mercury: atmosphere = 0.25
         }
         let starClass = Int(r.unit() * 5)
         let code = "PL-" + String(format: "%08X", UInt32(truncatingIfNeeded: h >> 32))
         return PlanetStyle(key: key, code: code, kind: kind, blobs: land, clouds: clouds, craters: craters,
                            cracks: cracks, caps: caps, bands: bands, wave: wave, detail: detail, tilt: tilt, spin: spin,
-                           storms: storms, rings: kind == .star ? false : rings, ringTilt: ringTilt, ringWidth: ringWidth,
+                           storms: storms, rings: kind == .star || kind.isCurio ? false : rings, ringTilt: ringTilt, ringWidth: ringWidth,
                            ringLines: ringLines, ringGap: ringGap,
                            atmosphere: atmosphere, starClass: starClass)
     }
